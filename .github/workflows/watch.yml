@@ -20,6 +20,4 @@ jobs:
       - name: 교육·공모전 소스 조회 → 노션 등록
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_EDU_DB: ${{ secrets.NOTION_EDU_DB }}
-          NOTION_CONTEST_DB: ${{ secrets.NOTION_CONTEST_DB }}
         run: python scripts/watch.py

@@ -1,0 +1,28 @@
+name: 아침 루틴 (노션)
+
+on:
+  schedule:
+    # 매일 07:00 KST (22:00 UTC) — 공고 감시(07:20)보다 먼저 돌아
+    # 스케줄 리셋·D-Day를 맞춘 뒤, 감시가 신규 공고를 얹는 순서가 된다.
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "쓰기 없이 계획만 출력"
+        type: boolean
+        default: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 스케줄 리셋 · D-Day · 마감 콜아웃 · 수면 기록
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts/daily.py ${{ inputs.dry_run && '--dry-run' || '' }}

@@ -13,57 +13,20 @@ GitHub Actions에서 매일 실행. 클로드 클라우드 루틴은 아웃바�
 회차명이 바뀌어도 중복 등록되지 않는다.
 
 환경변수:
-  NOTION_TOKEN      노션 내부 통합 시크릿
-  NOTION_EDU_DB     교육·강의 DB ID
-  NOTION_CONTEST_DB 공모전·경진대회 DB ID
+  NOTION_TOKEN  노션 내부 통합 시크릿 (DB ID는 notion.py에 상수로 있다)
 """
 
 import html
-import json
 import os
 import re
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
-KST = timezone(timedelta(hours=9))
-NOTION_API = "https://api.notion.com/v1"
-NOTION_VERSION = "2022-06-28"
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-
-TOKEN = os.environ["NOTION_TOKEN"]
-EDU_DB = os.environ["NOTION_EDU_DB"]
-CONTEST_DB = os.environ["NOTION_CONTEST_DB"]
+from notion import CONTEST_DB, EDU_DB, KST, api as notion, http
 
 # 공모전 목록에서 반도체 관련만 걸러내는 키워드
 SEMI_KEYWORDS = ("반도체", "회로설계", "FPGA", "Verilog", "RTL", "소자", "칩설계", "SoC")
-
-
-# ---------- HTTP ----------
-
-def http(url, method="GET", data=None, headers=None, raw=False):
-    req = urllib.request.Request(url, method=method)
-    req.add_header("User-Agent", UA)
-    for k, v in (headers or {}).items():
-        req.add_header(k, v)
-    body = None
-    if data is not None:
-        body = json.dumps(data).encode()
-        req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, body, timeout=30) as resp:
-        payload = resp.read().decode("utf-8", "ignore")
-    return payload if raw else json.loads(payload)
-
-
-def notion(path, method="GET", data=None):
-    return http(
-        f"{NOTION_API}{path}",
-        method=method,
-        data=data,
-        headers={"Authorization": f"Bearer {TOKEN}", "Notion-Version": NOTION_VERSION},
-    )
 
 
 def strip_tags(s):
