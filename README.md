@@ -1,57 +1,79 @@
 # isrc-watch
 
-서울대 ISRC(반도체공동연구소) 교육 공고를 매일 감시해 노션 「교육·강의」 DB에 자동 등록.
+반도체 교육·공모전 공고를 매일 감시해 노션 「교육·강의」·「공모전·경진대회」 DB에 자동 등록.
 
 ## 왜 GitHub Actions인가
 
-클로드 클라우드 루틴(매일 07:06 KST)은 아웃바운드 네트워크가 프록시로 전면 차단돼 있어
-(구글조차 CONNECT 403) 교육 사이트를 직접 읽지 못한다. WebSearch로만 교차확인하다 보니
-검색엔진에 색인 안 된 공고를 놓쳤다 — 2026-07 서울대 연합교육 실습이 실제로 며칠간 누락됨.
+클로드 클라우드 루틴(매일 07:06 KST)은 아웃바운드가 프록시로 전면 차단돼 있다 —
+구글조차 CONNECT 403. 그래서 교육 사이트를 직접 못 읽고 WebSearch로만 교차확인하다가,
+검색엔진에 색인 안 된 공고를 놓쳤다 (2026-07 서울대 연합교육 실습 며칠 누락).
 
-GitHub Actions 러너는 네트워크 제약이 없으므로 ISRC 일정 JSON을 직접 조회할 수 있다.
-클로드 루틴은 그대로 두고(스케줄 리셋·D-Day·브리핑 담당), 여기서는 "공고 누락 방지"만 책임진다.
+GitHub Actions 러너는 네트워크 제약이 없으므로 원본 사이트를 직접 파싱한다.
+클로드 루틴은 그대로 두고(스케줄 리셋·D-Day·마감 콜아웃·브리핑 담당),
+여기서는 **"공고 누락 방지"만** 책임진다.
 
-## 동작
+## 소스
 
-1. `https://isrc.snu.ac.kr/edu/school/info/state/json` POST 조회 (전체 교육 일정)
-2. 접수종료일이 오늘 이후인 과정만 추출 (EVENT_SKEY 중복 제거)
-3. 노션 DB에서 `주요 일정` 텍스트의 `[ISRC:<skey>]` 마커로 기등록분 식별
-4. 미등록 과정만 행 추가 — 상태(신청중/예정)·신청마감·주요 일정 자동 채움
-5. 실행 결과는 Actions Summary에 표시
+| 소스 | 방식 | 목적지 DB |
+|---|---|---|
+| 서울대 ISRC 교육시스템 | 일정 JSON (`/edu/school/info/state/json`) | 교육·강의 |
+| IDEC 단기교육 | 수강신청 목록 HTML 테이블 | 교육·강의 |
+| 위비티 (과학/공학) | 목록 HTML + 반도체 키워드 필터 | 공모전·경진대회 |
 
-과정명이 아니라 EVENT_SKEY로 중복 판정하므로, 회차명이 바뀌어도 중복 등록되지 않는다.
-`(일반)`이 붙은 과정은 재직자 트랙이라 메모에 자격 경고를 남긴다.
+제외한 소스:
+- **KSIA 인프라** — 재직자 전용(재직증명서 필수). 학생 트랙은 ISRC에 병행 개설되므로 ISRC로 커버.
+- **한국반도체아카데미(KSA)** — SPA라 API가 은닉돼 있고 몇 주째 신규 0건. 클로드 루틴의 WebSearch가 커버.
+- **SEMI** — 봇 차단(403) + "6학기 이상" 요건이라 현재 자격 미달.
+- **링커리어** — GraphQL 클라이언트 페칭. 위비티가 공모전을 커버.
+
+ISRC의 `(일반)` 과정은 재직자 트랙이라 자동 제외한다 (같은 교육의 `(학생)` 트랙이 따로 열림).
+
+## 중복 방지
+
+`주요 일정` 텍스트에 `[SRC:<소스>:<id>]` 마커를 심고, 그걸로 판정한다.
+회차명이 바뀌어도 중복 등록되지 않는다.
+
+마커가 없는 기존 행(사람이나 클로드가 넣은 것)은 **제목 포함 관계**로 한 번 더 거른다 —
+정규화(공백·괄호·기호 제거)한 제목이 서로 포함되면 같은 강좌로 본다.
+
+## 자동 분류
+
+- 교육 `분야`: 제목 키워드로 공정 / 아날로그설계 / 디지털설계 / 공통 추론
+- 공모전 `방식`: AI·데이터 / 설계 / 복합 추론
+- `상태`: 소스의 접수 상태 → 신청중 / 예정
+- `신청마감`·`접수마감`: 소스의 접수종료일 (KST)
 
 ## 셋업 (최초 1회)
 
-### 1. 노션 통합 생성 + DB 연결
-1. https://www.notion.so/my-integrations → **New integration**
-   - 이름: `isrc-watch`, 타입: Internal
-   - Capabilities: Read content + Insert content 체크
-2. **Internal Integration Secret** 복사 (`ntn_...`)
-3. 노션에서 「교육·강의」 DB 페이지 열기 → 우측 상단 `···` → **Connections** → `isrc-watch` 추가
-   (이걸 안 하면 API가 DB를 못 본다)
+### 1. 노션 통합 생성 + 연결
+1. https://www.notion.so/my-integrations → New integration (`isrc-watch`, Internal)
+   - Capabilities: Read content + Insert content
+2. Internal Integration Secret 복사 (`ntn_...`)
+3. 노션 **「인생 리바이벌 2026」 메인 페이지** → `···` → **Connections** → `isrc-watch` 추가
+   (메인에 붙이면 하위 DB가 전부 상속된다. DB 개별 연결도 가능)
 
-### 2. GitHub Secrets 등록
-리포지토리 → Settings → Secrets and variables → Actions → New repository secret
+### 2. GitHub Secrets
 
 | 이름 | 값 |
 |---|---|
-| `NOTION_TOKEN` | 위에서 복사한 `ntn_...` |
-| `NOTION_DB_ID` | `3244fcb7249c4098aa5a7f81a572c8cb` |
+| `NOTION_TOKEN` | `ntn_...` |
+| `NOTION_EDU_DB` | `3244fcb7249c4098aa5a7f81a572c8cb` |
+| `NOTION_CONTEST_DB` | `a9e6fc4e940a43628a018bc6220c91d5` |
 
-### 3. 동작 확인
-Actions 탭 → "반도체 교육 공고 감시" → **Run workflow** 수동 실행 → Summary 확인.
+## 스케줄
+
+매일 22:20 UTC = **07:20 KST**. 클로드 아침 루틴(07:06 KST) 직후라,
+루틴이 갱신한 DB 위에 신규 건만 얹는 순서가 된다.
+
+수동 실행: Actions 탭 → "반도체 교육 공고 감시" → Run workflow
 
 ## 로컬 테스트
 
 ```bash
 export NOTION_TOKEN='ntn_...'
-export NOTION_DB_ID='3244fcb7249c4098aa5a7f81a572c8cb'
+export NOTION_EDU_DB='3244fcb7249c4098aa5a7f81a572c8cb'
+export NOTION_CONTEST_DB='a9e6fc4e940a43628a018bc6220c91d5'
 python3 scripts/watch.py
 ```
 
-## 스케줄
-
-매일 22:20 UTC = **07:20 KST**. 클로드 아침 루틴(07:06 KST) 직후라, 루틴이 갱신한 DB 위에
-신규 건만 얹는 순서가 된다.
+소스 하나가 죽어도 나머지는 계속 돈다. 셋 다 죽으면 워크플로가 실패로 표시된다.
