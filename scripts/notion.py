@@ -24,6 +24,7 @@ CONTEST_DB = "a9e6fc4e940a43628a018bc6220c91d5"    # 공모전·경진대회
 CALENDAR_DB = "7305739ebe3048d082b62d1efb0826b5"   # 실행 캘린더 (여름)
 RETRO_DB = "dea6c521912844b49d5458bb557ef938"      # 주간 회고
 BODY_DB = "bce0e8b176c249f5989e412660cf7ba6"       # 신체 측정
+TRADING_DB = "38fd85ed153f48e3bfe2453e3a423b69"    # 💸 트레이딩 로그 (재미예산)
 
 # --- 메인 페이지의 고정 블록 ID ---
 # 노션 블록 ID는 블록을 지우고 새로 만들지 않는 한 바뀌지 않는다.

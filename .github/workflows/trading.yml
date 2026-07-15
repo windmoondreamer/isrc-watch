@@ -1,0 +1,28 @@
+name: 페이퍼 트레이딩 (SOXL 재미예산)
+
+on:
+  schedule:
+    # 평일 22:10 UTC = 미국장 마감 후 (EDT 18:10 / EST 17:10), KST 다음날 07:10.
+    # 방금 끝난 세션을 지침 v1 규칙으로 시뮬레이션해 트레이딩 로그 DB에 기록한다.
+    - cron: "10 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "노션에 쓰지 않고 판정만 출력"
+        type: boolean
+        default: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 세션 시뮬레이션 · 로그 기록 · 다음 세션 계획
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts/trading.py ${{ inputs.dry_run && '--dry-run' || '' }}
