@@ -80,7 +80,8 @@ def from_idec(today):
     """
     raw = http("https://www.idec.or.kr/edu/apply/list/", raw=True)
     out = []
-    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", raw, re.S):
+    # tr 여는 태그까지 통째로 잡는다 — 강좌번호(no=)가 <tr onclick=...>에 들어 있다.
+    for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
         cells = [strip_tags(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
         if len(cells) < 5 or cells[0] == "센터명":
             continue
@@ -91,6 +92,18 @@ def from_idec(today):
         (edu_s, edu_e), (app_s, app_e) = found[0], found[1]
         if app_e < today:  # 신청 마감 지난 강좌는 스킵
             continue
+        # 상세 페이지에서 수강대상을 뽑아 학부생 신청 가능 여부를 메모에 남긴다.
+        # (IDEC 강좌는 대부분 "학부3학년 이상"이지만 "석박사 우선" 표기가 헷갈려서 명시한다)
+        target = ""
+        no = re.search(r"no=(\d+)", tr)
+        if no:
+            try:
+                det = strip_tags(http(f"https://www.idec.or.kr/edu/apply/view/?&no={no.group(1)}", raw=True))
+                m = re.search(r"수강대상\s*(.+?)\s*(?:사전지식|선수과목|강의목)", det)
+                if m:
+                    target = m.group(1).strip()[:40]
+            except Exception:
+                pass
         out.append({
             "target": "edu",
             # IDEC은 안정적인 강좌 ID가 노출되지 않아 센터+제목+신청마감으로 식별자를 만든다.
@@ -101,8 +114,9 @@ def from_idec(today):
             "status": "신청중" if "신청중" in status else "예정",
             "link": "https://www.idec.or.kr/edu/apply/list/",
             "note": (
-                f"신청 {app_s} ~ {app_e} · 교육 {edu_s} ~ {edu_e} · "
-                f"{center} · IDEC 상태:{status} · ⚠️수강신청 정오 오픈·선착순"
+                f"신청 {app_s} ~ {app_e} · 교육 {edu_s} ~ {edu_e} · {center}"
+                f"{f' · 대상: {target}' if target else ''}"
+                f" · IDEC 상태:{status} · ⚠️수강신청 정오 오픈·선착순(석박사·재직자 우선)"
             ),
         })
     return out
