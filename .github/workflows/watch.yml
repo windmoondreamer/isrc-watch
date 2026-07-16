@@ -12,6 +12,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write   # docs/ 커밋 푸시용
+
 jobs:
   watch:
     runs-on: ubuntu-latest
@@ -26,3 +29,18 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python scripts/watch.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: 공유용 DB → 정적 사이트 빌드
+        if: ${{ !inputs.dry_run }}
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts/build_site.py
+
+      - name: 사이트 변경분 커밋·푸시 (GitHub Pages)
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --cached --quiet || git commit -m "chore: 공유 사이트 자동 갱신 [skip ci]"
+          git push

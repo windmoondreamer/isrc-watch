@@ -1,0 +1,199 @@
+<!doctype html><html lang="ko"><head>
+<meta charset="utf-8"><title>반도체 교육·강의 모아보기</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<style>
+:root{--paper:#f5f7f7;--card:#fff;--ink:#161b1a;--muted:#5a6663;--faint:#8b9592;--line:#e0e5e3;--accent:#0e7c86;--accent-soft:#e2f0f0;--proc:#b06f28;--proc-s:#f6ecdd;--digi:#2563a8;--digi-s:#e3edf8;--ana:#7c4dbb;--ana-s:#efe8f8;--comm:#5c6663;--comm-s:#eceeed;--now:#c0453f;--now-s:#f7e2e0;--soon:#b9772a;--soon-s:#f6ecdd;--far:#5a6663;--far-s:#eceeed;--open:#0e7c86;--open-s:#e2f0f0;--mono:ui-monospace,"SF Mono",Menlo,monospace;--sans:system-ui,-apple-system,"Noto Sans KR","Apple SD Gothic Neo",sans-serif;}
+@media(prefers-color-scheme:dark){:root{--paper:#0f1413;--card:#161c1b;--ink:#e7ecea;--muted:#98a29f;--faint:#67716e;--line:#252d2b;--accent:#3bb3bd;--accent-soft:#12292c;--proc:#d29a54;--proc-s:#2a2115;--digi:#5b9bd8;--digi-s:#132234;--ana:#a982e0;--ana-s:#241a33;--comm:#98a29f;--comm-s:#232726;--now:#e06b64;--now-s:#2e1917;--soon:#d6a05a;--soon-s:#2a2216;--far:#98a29f;--far-s:#232726;--open:#3bb3bd;--open-s:#12292c;}}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:48px 22px 80px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1{font-size:clamp(26px,5vw,38px);line-height:1.12;margin:0 0 12px;letter-spacing:-.02em;font-weight:700}
+.lede{font-size:16px;color:var(--muted);margin:0;max-width:60ch}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;flex:1;min-width:120px}
+.stat b{display:block;font-size:24px;font-family:var(--mono);line-height:1}.stat span{font-size:12.5px;color:var(--muted)}.stat.hot b{color:var(--now)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:16px;font-size:12px;color:var(--muted);font-family:var(--mono)}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:10px;height:10px;border-radius:3px}
+h2{font-size:15px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:40px 0 16px;display:flex;align-items:center;gap:10px}h2 .n{color:var(--accent)}h2::after{content:"";flex:1;height:1px;background:var(--line)}
+.grid{display:grid;gap:11px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px;transition:border-color .15s}.card:hover{border-color:var(--accent)}
+.ctop{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}.card h3{margin:0;font-size:15.5px;font-weight:620;line-height:1.35}
+.dd{font-family:var(--mono);font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;flex:none}.dd-now{background:var(--now-s);color:var(--now)}.dd-soon{background:var(--soon-s);color:var(--soon)}.dd-far{background:var(--far-s);color:var(--far)}.dd-open{background:var(--open-s);color:var(--open)}
+.meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}.tag{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:6px}.f-proc{background:var(--proc-s);color:var(--proc)}.f-digi{background:var(--digi-s);color:var(--digi)}.f-ana{background:var(--ana-s);color:var(--ana)}.f-comm{background:var(--comm-s);color:var(--comm)}
+.st{font-size:12px;color:var(--muted)}.dl{font-size:12px;color:var(--muted);font-family:var(--mono);margin-left:auto}.note{margin:9px 0 0;font-size:13px;color:var(--muted)}
+.go{display:inline-block;margin-top:11px;font-size:12.5px;font-family:var(--mono);color:var(--accent);text-decoration:none;border:1px solid var(--accent-soft);background:var(--accent-soft);padding:4px 11px;border-radius:6px}.go:hover{background:var(--accent);color:#fff}
+footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--faint);font-family:var(--mono)}
+@media(max-width:560px){.ctop{flex-direction:column;gap:8px}.dl{margin-left:0}}
+</style></head><body>
+<div class="wrap">
+<p class="eyebrow">2026 여름 · 매일 자동 갱신</p>
+<h1>반도체 교육·강의 모아보기</h1>
+<p class="lede">전국 대학·기관의 반도체 공정실습·설계교육을 한곳에. 마감 임박순으로 정렬했습니다. 자격·비용은 각 신청 페이지에서 확인하세요.</p>
+<div class="stats">
+ <div class="stat"><b>30</b><span>전체 교육</span></div>
+ <div class="stat hot"><b>7</b><span>7일 내 마감</span></div>
+ <div class="stat"><b>5</b><span>공정</span></div>
+ <div class="stat"><b>12</b><span>설계</span></div>
+</div>
+<div class="legend">
+ <span><i class="dot" style="background:var(--proc)"></i>공정</span>
+ <span><i class="dot" style="background:var(--digi)"></i>디지털설계</span>
+ <span><i class="dot" style="background:var(--ana)"></i>아날로그설계</span>
+ <span><i class="dot" style="background:var(--comm)"></i>공통</span>
+ <span><i class="dot" style="background:var(--now)"></i>마감 임박</span>
+</div>
+<h2>🎓 교육·강의 <span class="n">30</span></h2>
+<div class="grid">
+<article class="card">
+  <div class="ctop"><h3>반도체는 몰라도 이해할 수 있는 트랜지스터  (심화) (KSIA)</h3><span class="dd dd-now">오늘!</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/16</span></div>
+  <p class="note">모집 ~2026-07-16 · 교육 2026-07-06 ~ 2026-07-16 · 대상: 반도체 관심있는 예비취업자 해당 교육과정은 현재 진행 중인 강좌의 출석을</p><a class="go" href="https://infra.ksia.or.kr/user/Wo/WoUser0101V.do?SCH_PRM_GB=002&amp;TAB_ID=2&amp;CURRENT_MENU_CODE=MENU0039&amp;TOP_MENU_CODE=MENU0039&amp;WO_SEQ=566" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>2026 K-ISRC연합교육 - (서울대) 반도체기본공정실습</h3><span class="dd dd-now">오늘!</span></div>
+  <div class="meta"><span class="tag f-proc">공정</span><span class="st">예정</span><span class="dl">마감 07/16</span></div>
+  <p class="note">접수 2026-07-10 09:00 ~ 2026-07-16 17:00 · 교육 2026-07-27 09:00 ~ 2026-07-29 17:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>2026년 나노융합기술인력양성사업(장기과정)</h3><span class="dd dd-soon">D-4</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/20</span></div>
+  <p class="note">접수 2026-07-14 09:00 ~ 2026-07-20 17:00 · 교육 2026-08-10 09:00 ~ 2026-09-07 18:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>2026 K-ISRC 연합교육 (단기강좌) - (서울대) DRAM 설계 및 공정 심화</h3><span class="dd dd-soon">D-4</span></div>
+  <div class="meta"><span class="tag f-proc">공정</span><span class="st">신청중</span><span class="dl">마감 07/20</span></div>
+  <p class="note">접수 2026-07-15 00:00 ~ 2026-07-20 23:59 · 교육 2026-07-27 09:00 ~ 2026-07-28 18:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>2026 K-ISRC 연합교육 (단기강좌) - (서울대) 반도체 제품 및 집적 기술의 이해(중급)</h3><span class="dd dd-soon">D-4</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/20</span></div>
+  <p class="note">접수 2026-07-15 00:00 ~ 2026-07-20 23:59 · 교육 2026-07-24 09:00 ~ 2026-07-24 18:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>한양대/한양대 연합 반도체 인력양성 특별과정(2주과정) (KSIA)</h3><span class="dd dd-soon">D-7</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/23</span></div>
+  <p class="note">모집 ~2026-07-23 · 교육 2026-07-27 ~ 2026-07-31 · 대상: 이공계 대학(학부·대학원)재학생 또는 졸업생(재학생의 경우 2027년 2</p><a class="go" href="https://infra.ksia.or.kr/user/Wo/WoUser0101V.do?SCH_PRM_GB=002&amp;TAB_ID=2&amp;CURRENT_MENU_CODE=MENU0039&amp;TOP_MENU_CODE=MENU0039&amp;WO_SEQ=573" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>한양대/포항공대 연합 반도체 인력양성 특별과정(2주과정) (KSIA)</h3><span class="dd dd-soon">D-7</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/23</span></div>
+  <p class="note">모집 ~2026-07-23 · 교육 2026-07-27 ~ 2026-07-31 · 대상: 이공계 대학(학부·대학원)재학생 또는 졸업생(재학생의 경우 2027 년</p><a class="go" href="https://infra.ksia.or.kr/user/Wo/WoUser0101V.do?SCH_PRM_GB=002&amp;TAB_ID=2&amp;CURRENT_MENU_CODE=MENU0039&amp;TOP_MENU_CODE=MENU0039&amp;WO_SEQ=574" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>비디오 압축 기술의 기초와 최신 비디오 코덱 (HEVC/VVC) (광운대)</h3><span class="dd dd-far">D-8</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/24</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-07-24 · 교육 2026-07-30 ~ 2026-08-01 · 광운대 · 대상: 학부 3년차 이상 · IDEC 상태:신청</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>2026년 8월 반도체기본공정교육 모집안내(학생)</h3><span class="dd dd-far">D-8</span></div>
+  <div class="meta"><span class="tag f-proc">공정</span><span class="st">예정</span><span class="dl">마감 07/24</span></div>
+  <p class="note">접수 2026-07-20 09:00 ~ 2026-07-24 12:00 · 교육 2026-08-18 09:00 ~ 2026-08-21 18:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Fundamentals and Building Blocks of High-Speed Wireline Interfaces (한양대)</h3><span class="dd dd-far">D-10</span></div>
+  <div class="meta"><span class="tag f-ana">아날로그설계</span><span class="st">신청중</span><span class="dl">마감 07/26</span></div>
+  <p class="note">신청 2026-07-07 ~ 2026-07-26 · 교육 2026-07-30 ~ 2026-07-31 · 한양대 · 대상: 대학원, 학부, 산업체 재직자 · IDE</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>AWR을 이용한 RF 수동소자 설계 및 EM 해석 (경북대)</h3><span class="dd dd-far">D-10</span></div>
+  <div class="meta"><span class="tag f-ana">아날로그설계</span><span class="st">신청중</span><span class="dl">마감 07/26</span></div>
+  <p class="note">신청 2026-07-02 ~ 2026-07-26 · 교육 2026-08-03 ~ 2026-08-05 · 경북대 · 대상: 전자/통신/정보통신 분야 개발/엔지니어</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>오픈-소스 도구 활용 “내 칩” 설계 및 제작 (전남대)</h3><span class="dd dd-far">D-13</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/29</span></div>
+  <p class="note">신청 2026-07-07 ~ 2026-07-29 · 교육 2026-08-03 ~ 2026-08-05 · 전남대 · 대상: 권장 수강 대상: 학부 4학년 이상</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>[Synopsys] FusionCompiler 사용법 및 활용 예 (본센터)</h3><span class="dd dd-far">D-15</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 07/31</span></div>
+  <p class="note">신청 2026-07-06 ~ 2026-07-31 · 교육 2026-08-05 ~ 2026-08-07 · 본센터 · 대상: 대학(원)생, 회사원 · IDEC 상태:</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Verilog HDL 실습 및 HLS를 사용한 간단한 인공지능 시스템 구현 (전남대)</h3><span class="dd dd-far">D-15</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">신청중</span><span class="dl">마감 07/31</span></div>
+  <p class="note">신청 2026-07-06 ~ 2026-07-31 · 교육 2026-08-06 ~ 2026-08-07 · 전남대 · 대상: FPGA, 뉴모로픽에 관심있는 학부생,</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>양산 제품 관점에서의 PMIC 실무 (부산대)</h3><span class="dd dd-far">D-18</span></div>
+  <div class="meta"><span class="tag f-ana">아날로그설계</span><span class="st">신청중</span><span class="dl">마감 08/03</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-08-03 · 교육 2026-08-05 ~ 2026-08-06 · 부산대 · 대상: 관련 학부생 및 대학원생 · IDEC 상</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>디지털 시스템 반도체 ASIC 설계 (경북대)</h3><span class="dd dd-far">D-18</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">신청중</span><span class="dl">마감 08/03</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-08-03 · 교육 2026-08-11 ~ 2026-08-13 · 경북대 · 대상: 전기, 전자, 정보통신 관련 전공 학부생</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>CMOS 디지털 IP 설계 핵심 기술 (8월 10일, 11일....13일--3일 강의) (충북대)</h3><span class="dd dd-far">D-20</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">신청중</span><span class="dl">마감 08/05</span></div>
+  <p class="note">신청 2026-06-22 ~ 2026-08-05 · 교육 2026-08-10 ~ 2026-08-13 · 충북대 · 대상: 학부3학년 이상, 대학원생, 관련 직무</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>[Scientific Analog] XMODEL을 활용한 DC-DC 컨버터 모델링 및 시뮬레이션 (본센터)</h3><span class="dd dd-far">D-20</span></div>
+  <div class="meta"><span class="tag f-ana">아날로그설계</span><span class="st">신청중</span><span class="dl">마감 08/05</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-08-05 · 교육 2026-08-11 ~ 2026-08-12 · 본센터 · 대상: 학부 4학년 이상 · IDEC 상태:신청</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Cadence APD를 활용한 IC Package 설계 (전남대)</h3><span class="dd dd-far">D-20</span></div>
+  <div class="meta"><span class="tag f-proc">공정</span><span class="st">신청중</span><span class="dl">마감 08/05</span></div>
+  <p class="note">신청 2026-07-09 ~ 2026-08-05 · 교육 2026-08-11 ~ 2026-08-13 · 전남대 · 대상: 권장 수강 대상: 학부 4년차 이상</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>high speed wireline transceiver architecture and design (부산대)</h3><span class="dd dd-far">D-21</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 08/06</span></div>
+  <p class="note">신청 2026-07-14 ~ 2026-08-06 · 교육 2026-08-10 ~ 2026-08-11 · 부산대 · 대상: 관련 학부생 및 대학원생 · IDEC 상</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Layout 기초 및 CMOS Logic실습 (충북대)</h3><span class="dd dd-far">D-22</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">예정</span><span class="dl">마감 08/07</span></div>
+  <p class="note">신청 2026-06-22 ~ 2026-08-07 · 교육 2026-08-12 ~ 2026-08-14 · 충북대 · 대상: 학부3학년 이상, 석사1년, 관련 직무</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>생성형 AI 기초 및 실습 (전남대)</h3><span class="dd dd-far">D-27</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 08/12</span></div>
+  <p class="note">신청 2026-07-16 ~ 2026-08-12 · 교육 2026-08-18 ~ 2026-08-20 · 전남대 · 대상: 석사 1년차 이상 · IDEC 상태:신청</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Verilog HDL 이론 및 Intel FPGA 실습 (충북대)</h3><span class="dd dd-far">D-28</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">신청중</span><span class="dl">마감 08/13</span></div>
+  <p class="note">신청 2026-06-29 ~ 2026-08-13 · 교육 2026-08-18 ~ 2026-08-20 · 충북대 · 대상: 학부3학년 이상 · IDEC 상태:신청중</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>AI 가속 시스템 설계 (충북대)</h3><span class="dd dd-far">D-28</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감 08/13</span></div>
+  <p class="note">신청 2026-07-01 ~ 2026-08-13 · 교육 2026-08-18 ~ 2026-08-20 · 충북대 · 대상: 학부3학년 이상, 석사1년 · IDEC</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>Vivado 기반의 FPGA 설계 실습 (전남대)</h3><span class="dd dd-far">D-33</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">예정</span><span class="dl">마감 08/18</span></div>
+  <p class="note">신청 2026-07-22 ~ 2026-08-18 · 교육 2026-08-24 ~ 2026-08-26 · 전남대 · 대상: 권장 수강 대상: 학부 3학년 이상</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>SoC설계 및 구현 (충북대)</h3><span class="dd dd-far">D-34</span></div>
+  <div class="meta"><span class="tag f-digi">디지털설계</span><span class="st">신청중</span><span class="dl">마감 08/19</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-08-19 · 교육 2026-08-24 ~ 2026-08-26 · 충북대 · 대상: 학부 3학년 이상, 대학원생, 관련 직무</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>전력반도체회로설계 (충북대)</h3><span class="dd dd-far">D-34</span></div>
+  <div class="meta"><span class="tag f-ana">아날로그설계</span><span class="st">신청중</span><span class="dl">마감 08/19</span></div>
+  <p class="note">신청 2026-07-13 ~ 2026-08-19 · 교육 2026-08-25 ~ 2026-08-27 · 충북대 · 대상: 학부 4학년 이상, 대학원생, 관련 직무</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>임베디드메모리(SRAM) 기초 (광운대)</h3><span class="dd dd-far">D-36</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">예정</span><span class="dl">마감 08/21</span></div>
+  <p class="note">신청 2026-08-10 ~ 2026-08-21 · 교육 2026-08-24 ~ 2026-08-25 · 광운대 · 대상: 학부 3, 4학년 및 석사과정 · IDE</p><a class="go" href="https://www.idec.or.kr/edu/apply/list/" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>제1회  K-ISRC 연합교육  [ AI반도체기본공정교육 ]</h3><span class="dd dd-far">D-36</span></div>
+  <div class="meta"><span class="tag f-proc">공정</span><span class="st">예정</span><span class="dl">마감 08/21</span></div>
+  <p class="note">접수 2026-08-10 09:00 ~ 2026-08-21 13:00 · 교육 2026-09-07 09:00 ~ 2026-09-10 18:00 · 주관 서울대 I</p><a class="go" href="https://isrc.snu.ac.kr/edu/school/event/list" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+<article class="card">
+  <div class="ctop"><h3>[대학일자리+] 2026학년도 반도체 실습 프로그램 신청안내 (건국대 취업)</h3><span class="dd dd-open">상시·미정</span></div>
+  <div class="meta"><span class="tag f-comm">공통</span><span class="st">신청중</span><span class="dl">마감일 확인</span></div>
+  <p class="note">건국대 취업 게시판 · 게시 2026.07.14 · ·자격·비용은 게시글 직접 확인 필요</p><a class="go" href="https://www.konkuk.ac.kr/bbs/job/4083/1201561/artclView.do" target="_blank" rel="noopener">신청 페이지 ↗</a>
+</article>
+</div>
+<footer>2026-07-16 갱신 · 자동 수집(GitHub Actions) · 마감·자격은 각 신청 페이지에서 최종 확인</footer>
+</div></body></html>
