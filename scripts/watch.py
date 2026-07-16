@@ -277,11 +277,12 @@ def norm(s):
     return re.sub(r"[\s()\[\]<>·,.\-–—/'\"“”]+", "", s).lower()
 
 
-def existing_rows(db_id, title_prop):
+def existing_rows(db_id, title_prop, note_prop="주요 일정"):
     """DB의 기등록 마커 집합과 정규화 제목 목록.
 
     마커는 이 스크립트가 심은 것만 있으므로, 그 이전에 사람이/클로드가 넣은 행은
     제목으로만 식별할 수 있다. 둘 다 써서 중복을 막는다.
+    (공유용 DB는 마커를 '안내' 열에 심으므로 note_prop로 열 이름을 받는다.)
     """
     markers, titles = set(), []
     cursor = None
@@ -293,7 +294,7 @@ def existing_rows(db_id, title_prop):
         for page in res["results"]:
             props = page["properties"]
             note = "".join(
-                t["plain_text"] for t in props.get("주요 일정", {}).get("rich_text", [])
+                t["plain_text"] for t in props.get(note_prop, {}).get("rich_text", [])
             )
             markers.update(re.findall(r"\[SRC:([^\]]+)\]", note))
             # 초기 도입기 마커 형식([ISRC:2514])도 인식
@@ -382,6 +383,27 @@ def add_row(item):
     notion("/pages", method="POST", data={"parent": {"database_id": db_id}, "properties": props})
 
 
+# 공유용 DB — 개인 신청 상태·개인 메모 없이 순수 교육 정보만. 웹 게시해서 공유한다.
+SHARE_DB = "ed571515fdeb4af69f8df0e46b7121a0"
+
+
+def add_share_row(item):
+    """공유용 DB에 교육 정보를 넣는다. 개인 DB와 달리 사람이 손댄 개인 상태가 없어
+    그대로 공개해도 안전하다. 마커는 '안내' 열에 심어 중복을 막는다."""
+    note = f"{item['note']} · [SRC:{item['marker']}]"
+    props = {
+        "교육명": {"title": [{"text": {"content": item["title"][:200]}}]},
+        "상태": {"select": {"name": item["status"]}},
+        "분야": {"select": {"name": classify(item["title"])}},
+        "링크": {"url": item["link"]},
+        "안내": {"rich_text": [{"text": {"content": note[:2000]}}]},
+    }
+    iso = to_iso(item["deadline"]) if item["deadline"] else None
+    if iso:
+        props["신청마감"] = {"date": {"start": iso}}
+    notion("/pages", method="POST", data={"parent": {"database_id": SHARE_DB}, "properties": props})
+
+
 # ---------- main ----------
 
 def main():
@@ -419,6 +441,18 @@ def main():
         if not DRY:
             add_row(i)
         print(f"  {'· 미리보기' if DRY else '→ 등록'}: [{i['target']}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
+
+    # 공유용 DB 미러링 — 교육 항목만, 개인 정보 없이. 통합 연결 안 됐으면 조용히 건너뛴다.
+    try:
+        share_markers, share_titles = existing_rows(SHARE_DB, "교육명", note_prop="안내")
+        share_new = [i for i in items if i["target"] == "edu" and not is_known(i, share_markers, share_titles)]
+        for i in share_new:
+            if not DRY:
+                add_share_row(i)
+        print(f"[공유용] 신규 {len(share_new)}건" + (" (dry-run)" if DRY else " 미러링"))
+    except urllib.error.HTTPError as e:
+        errors.append(f"공유용 DB 접근 실패(통합 연결 확인): HTTP {e.code}")
+        print(f"[공유용] 통합 연결 안 됨 (HTTP {e.code}) — 개인 DB는 정상 처리됨", file=sys.stderr)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
