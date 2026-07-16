@@ -307,6 +307,20 @@ def from_brave(today):
                 continue
             if not any(k in blob for k in ("실습", "교육", "캠프", "양성", "부트캠프", "FAB", "팹")):
                 continue
+            # 교육 모집이 아닌 페이지 제외 (채용·교과과정 소개·교수 초빙 등)
+            if any(k in blob for k in ("채용", "교과과정", "커리큘럼", "교수 초빙", "연구원 모집", "학사일정")):
+                continue
+            # ★ 게시일(page_age) 기준으로 오래된 공고를 거른다.
+            # 반도체 교육 모집은 교육 1~2달 전에 올라오므로, 최근 120일 내 게시된 것만
+            # 현재 진행 중일 가능성이 있다. 게시일이 90일보다 오래됐으면 지난 회차다.
+            posted = (it.get("page_age") or "")[:10]  # "2026-06-10"
+            if posted:
+                try:
+                    pd = datetime.strptime(posted, "%Y-%m-%d").date()
+                    if (datetime.now(KST).date() - pd).days > 120:
+                        continue
+                except ValueError:
+                    pass
             mk = re.sub(r"^https?://", "", link).rstrip("/")[:90]
             out.append({
                 "target": "edu",
@@ -316,7 +330,7 @@ def from_brave(today):
                 "deadline": "",
                 "status": "신청중",
                 "link": link,
-                "note": f"대학 웹검색 발견 · {desc[:80]} · ⚠️마감·자격·비용은 게시글 직접 확인 필요",
+                "note": f"대학 웹검색 발견 · 게시 {posted or '?'} · {desc[:70]} · ⚠️마감·자격은 게시글 직접 확인",
             })
     return out
 
