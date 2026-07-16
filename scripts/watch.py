@@ -248,6 +248,14 @@ def from_univ(today):
             m = re.search(r"/(\d+)/artclView", a.group(1))  # 글번호 = 고유 ID
             seq = m.group(1) if m else title[:24]
             date = re.search(r"20\d\d[-.]\d\d[-.]\d\d", tr)
+            # 게시일이 오래된 글은 지난 회차다 — 최근 120일 내 게시된 것만 남긴다.
+            if date:
+                try:
+                    d = datetime.strptime(re.sub(r"[.]", "-", date.group(0)), "%Y-%m-%d").date()
+                    if (datetime.now(KST).date() - d).days > 120:
+                        continue
+                except ValueError:
+                    pass
             out.append({
                 "target": "edu",
                 "marker": f"UNIV:{seq}",
