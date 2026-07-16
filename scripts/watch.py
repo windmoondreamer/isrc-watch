@@ -235,7 +235,8 @@ def from_univ(today):
     for name, list_url, base in UNIV_BOARDS:
         try:
             raw = http(list_url, raw=True)
-        except Exception:
+        except Exception as e:
+            print(f"[대학게시판] {name} 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
             continue
         for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
             a = re.search(r'<a[^>]*href="([^"]*artclView\.do)"[^>]*>(.*?)</a>', tr, re.S)
