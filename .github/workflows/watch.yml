@@ -25,6 +25,5 @@ jobs:
       - name: 교육·공모전 소스 조회 → 노션 등록
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_CX: ${{ secrets.GOOGLE_CX }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
         run: python scripts/watch.py ${{ inputs.dry_run && '--dry-run' || '' }}

@@ -261,60 +261,62 @@ def from_univ(today):
     return out
 
 
-GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
-GOOGLE_CX = os.environ.get("GOOGLE_CX")
-# 대학 도메인(.ac.kr 등 44개)으로 범위를 좁힌 커스텀 검색엔진(cx)이라, 쿼리엔 site 지정이 필요 없다.
-GOOGLE_QUERIES = (
-    "반도체 공정실습 모집",
-    "반도체 공정교육 신청",
-    "반도체 실습 프로그램 참가자",
-    "반도체 공정캠프 모집",
+BRAVE_KEY = os.environ.get("BRAVE_API_KEY")
+# site:ac.kr로 대학 도메인에 한정한다. 구글 Custom Search가 2026년부터 신규 사용자에게
+# 폐쇄돼(403), 신규 가입 가능한 Brave Search API로 바꿨다. 월 무료 크레딧 안에서 충분.
+BRAVE_QUERIES = (
+    "반도체 공정실습 모집 site:ac.kr",
+    "반도체 공정교육 신청 site:ac.kr",
+    "반도체 실습 프로그램 참가자 site:ac.kr",
+    "반도체 공정캠프 모집 site:ac.kr",
 )
 
 
-def from_google(today):
-    """구글 커스텀 검색(대학 도메인 한정)으로 전국 대학 반도체 교육 공고를 발견한다.
+def from_brave(today):
+    """Brave 검색(대학 도메인 한정)으로 전국 대학 반도체 교육 공고를 발견한다.
 
-    개별 학교 게시판을 다 등록하는 건 비현실적이라, 구글이 색인한 대학 웹을 매일
-    몇 개 쿼리로 훑는다. 최근 2주(dateRestrict=d14) 결과만 받아 오래된 공고를 거른다.
+    개별 학교 게시판을 다 등록하는 건 비현실적이라, 검색엔진이 색인한 대학 웹을 매일
+    몇 개 쿼리로 훑는다. freshness=pm(최근 한 달)로 오래된 공고를 거른다.
     마감일은 검색 스니펫에 안 나오므로 발견까지만 — 마감·자격은 게시글 직접 확인.
     """
-    if not (GOOGLE_KEY and GOOGLE_CX):
+    if not BRAVE_KEY:
         return []
     out, seen = [], set()
-    for q in GOOGLE_QUERIES:
+    for q in BRAVE_QUERIES:
         try:
+            # freshness=py(최근 1년)로 오래된 공고만 걸러낸다. pm(한 달)은 너무 좁아
+            # 실제 공정실습 모집을 놓쳤다.
             url = (
-                "https://www.googleapis.com/customsearch/v1"
-                f"?key={GOOGLE_KEY}&cx={GOOGLE_CX}"
-                f"&q={urllib.parse.quote(q)}&dateRestrict=d14&num=10"
+                "https://api.search.brave.com/res/v1/web/search"
+                f"?q={urllib.parse.quote(q)}&count=15&freshness=py&country=kr"
             )
-            r = http(url)
+            r = http(url, headers={"X-Subscription-Token": BRAVE_KEY, "Accept": "application/json"})
         except Exception:
             continue
-        for it in r.get("items", []):
-            link = it.get("link", "")
+        for it in r.get("web", {}).get("results", []):
+            link = it.get("url", "")
             if not link or link in seen:
                 continue
             seen.add(link)
             title = " ".join(it.get("title", "").split())
-            snippet = " ".join(it.get("snippet", "").split())
-            blob = f"{title} {snippet}"
-            # 반도체 + 실습/교육류 키워드가 함께 있어야 교육 공고로 본다.
-            if "반도체" not in blob:
+            desc = " ".join(it.get("description", "").split())
+            blob = f"{title} {desc}"
+            # '반도체' + '공정' + (실습/교육/캠프...) 세 조건을 모두 만족해야 교육 공고로 본다.
+            # '모집'·'교육'만으론 장학생 모집·연구발표·학부소개가 걸려 노이즈가 심하다.
+            if "반도체" not in blob or "공정" not in blob:
                 continue
-            if not any(k in blob for k in ("실습", "공정", "교육", "모집", "캠프", "양성", "부트캠프")):
+            if not any(k in blob for k in ("실습", "교육", "캠프", "양성", "부트캠프", "FAB", "팹")):
                 continue
             mk = re.sub(r"^https?://", "", link).rstrip("/")[:90]
             out.append({
                 "target": "edu",
-                "marker": f"GOOGLE:{mk}",
+                "marker": f"BRAVE:{mk}",
                 "title": title[:80],
                 "core_title": title,
                 "deadline": "",
                 "status": "신청중",
                 "link": link,
-                "note": f"구글 대학검색 발견 · {snippet[:80]} · ⚠️마감·자격·비용은 게시글 직접 확인 필요",
+                "note": f"대학 웹검색 발견 · {desc[:80]} · ⚠️마감·자격·비용은 게시글 직접 확인 필요",
             })
     return out
 
@@ -437,7 +439,7 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity), ("대학게시판", from_univ), ("구글검색", from_google)):
+    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity), ("대학게시판", from_univ), ("대학웹검색", from_brave)):
         try:
             got = fn(today)
             items.extend(got)
