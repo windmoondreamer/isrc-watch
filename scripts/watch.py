@@ -21,9 +21,12 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 from datetime import datetime
 
 from notion import CONTEST_DB, EDU_DB, KST, api as notion, http
+
+DRY = "--dry-run" in sys.argv  # 쓰기 없이 수집 결과만 출력
 
 # 공모전 목록에서 반도체 관련만 걸러내는 키워드
 SEMI_KEYWORDS = ("반도체", "회로설계", "FPGA", "Verilog", "RTL", "소자", "칩설계", "SoC")
@@ -210,6 +213,112 @@ def from_ksia(today):
     return out
 
 
+# 대학 학과 게시판 — 개별 대학 자체 모집(건국대 공정실습 등)은 ISRC·IDEC에 안 뜬다.
+# 한국 대학 게시판은 대부분 같은 CMS(URL이 .../artclList.do)라 파서 하나로 여러 곳을 본다.
+# (게시판명, 목록 URL, 도메인) — 관심 학과를 여기에 추가하면 된다.
+UNIV_BOARDS = [
+    # 반도체 실습 모집은 학과가 아니라 본부 취업/일자리 게시판에 뜬다(2026-07-14 실제 확인).
+    ("건국대 취업", "https://www.konkuk.ac.kr/bbs/job/4083/artclList.do", "https://www.konkuk.ac.kr"),
+]
+# 제목에 이 중 하나라도 있어야 반도체 교육 공고로 본다. '실습'만으론 현장실습 등이 걸려 오탐이 난다.
+UNIV_KEYWORDS = ("반도체", "공정실습", "공정 실습", "공정교육", "반도체공정", "소자공정")
+
+
+def from_univ(today):
+    """관심 학과 게시판에서 반도체 공정교육 모집 글만 골라낸다.
+
+    게시판 목록엔 마감일이 없다(상세 글 본문에만 있고 형식이 제각각). 그래서
+    '발견'까지만 하고 마감일·자격은 게시글 직접 확인으로 넘긴다 — 건국대를 놓친 건
+    발견 자체를 못 한 것이라, 발견만 돼도 절반은 해결된다.
+    """
+    out = []
+    for name, list_url, base in UNIV_BOARDS:
+        try:
+            raw = http(list_url, raw=True)
+        except Exception:
+            continue
+        for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
+            a = re.search(r'<a[^>]*href="([^"]*artclView\.do)"[^>]*>(.*?)</a>', tr, re.S)
+            if not a:
+                continue
+            title = strip_tags(a.group(2))
+            title = re.sub(r"\s*(새글|NEW)\s*$", "", title)  # 게시판 NEW 배지 제거
+            if not any(k in title for k in UNIV_KEYWORDS):
+                continue
+            m = re.search(r"/(\d+)/artclView", a.group(1))  # 글번호 = 고유 ID
+            seq = m.group(1) if m else title[:24]
+            date = re.search(r"20\d\d[-.]\d\d[-.]\d\d", tr)
+            out.append({
+                "target": "edu",
+                "marker": f"UNIV:{seq}",
+                "title": f"{title[:70]} ({name})",
+                "core_title": title,
+                "deadline": "",  # 게시판 목록엔 마감일 없음 → 게시글 직접 확인
+                "status": "신청중",
+                "link": base + a.group(1),
+                "note": f"{name} 게시판 · 게시 {date.group(0) if date else '?'} · ⚠️마감일·자격·비용은 게시글 직접 확인 필요",
+            })
+    return out
+
+
+GOOGLE_KEY = os.environ.get("GOOGLE_API_KEY")
+GOOGLE_CX = os.environ.get("GOOGLE_CX")
+# 대학 도메인(.ac.kr 등 44개)으로 범위를 좁힌 커스텀 검색엔진(cx)이라, 쿼리엔 site 지정이 필요 없다.
+GOOGLE_QUERIES = (
+    "반도체 공정실습 모집",
+    "반도체 공정교육 신청",
+    "반도체 실습 프로그램 참가자",
+    "반도체 공정캠프 모집",
+)
+
+
+def from_google(today):
+    """구글 커스텀 검색(대학 도메인 한정)으로 전국 대학 반도체 교육 공고를 발견한다.
+
+    개별 학교 게시판을 다 등록하는 건 비현실적이라, 구글이 색인한 대학 웹을 매일
+    몇 개 쿼리로 훑는다. 최근 2주(dateRestrict=d14) 결과만 받아 오래된 공고를 거른다.
+    마감일은 검색 스니펫에 안 나오므로 발견까지만 — 마감·자격은 게시글 직접 확인.
+    """
+    if not (GOOGLE_KEY and GOOGLE_CX):
+        return []
+    out, seen = [], set()
+    for q in GOOGLE_QUERIES:
+        try:
+            url = (
+                "https://www.googleapis.com/customsearch/v1"
+                f"?key={GOOGLE_KEY}&cx={GOOGLE_CX}"
+                f"&q={urllib.parse.quote(q)}&dateRestrict=d14&num=10"
+            )
+            r = http(url)
+        except Exception:
+            continue
+        for it in r.get("items", []):
+            link = it.get("link", "")
+            if not link or link in seen:
+                continue
+            seen.add(link)
+            title = " ".join(it.get("title", "").split())
+            snippet = " ".join(it.get("snippet", "").split())
+            blob = f"{title} {snippet}"
+            # 반도체 + 실습/교육류 키워드가 함께 있어야 교육 공고로 본다.
+            if "반도체" not in blob:
+                continue
+            if not any(k in blob for k in ("실습", "공정", "교육", "모집", "캠프", "양성", "부트캠프")):
+                continue
+            mk = re.sub(r"^https?://", "", link).rstrip("/")[:90]
+            out.append({
+                "target": "edu",
+                "marker": f"GOOGLE:{mk}",
+                "title": title[:80],
+                "core_title": title,
+                "deadline": "",
+                "status": "신청중",
+                "link": link,
+                "note": f"구글 대학검색 발견 · {snippet[:80]} · ⚠️마감·자격·비용은 게시글 직접 확인 필요",
+            })
+    return out
+
+
 # ---------- 노션 ----------
 
 def norm(s):
@@ -328,7 +437,7 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity)):
+    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity), ("대학게시판", from_univ), ("구글검색", from_google)):
         try:
             got = fn(today)
             items.extend(got)
@@ -354,10 +463,11 @@ def main():
         if not is_known(i, markers, titles):
             new.append(i)
 
-    print(f"\n[{today}] 수집 {len(items)}건 / 신규 {len(new)}건")
+    print(f"\n[{today}] 수집 {len(items)}건 / 신규 {len(new)}건" + (" (dry-run: 등록 안 함)" if DRY else ""))
     for i in new:
-        add_row(i)
-        print(f"  → 등록: [{i['target']}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
+        if not DRY:
+            add_row(i)
+        print(f"  {'· 미리보기' if DRY else '→ 등록'}: [{i['target']}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
