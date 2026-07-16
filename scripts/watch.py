@@ -136,6 +136,66 @@ def from_wevity(today):
     return out
 
 
+KSIA_LIST = (
+    "https://infra.ksia.or.kr/user/Wo/WoUser0101.do"
+    "?SCH_PRM_GB=002&TAB_ID=1&CURRENT_MENU_CODE=MENU0039&TOP_MENU_CODE=MENU0039"
+)
+KSIA_DETAIL = (
+    "https://infra.ksia.or.kr/user/Wo/WoUser0101V.do"
+    "?SCH_PRM_GB=002&TAB_ID=2&CURRENT_MENU_CODE=MENU0039&TOP_MENU_CODE=MENU0039&WO_SEQ="
+)
+
+
+def from_ksia(today):
+    """KSIA 인프라 '비재직자'(SCH_PRM_GB=002) 목록 — 학생 대상 공정교육.
+
+    재직자 탭(001)은 학생이 못 듣지만, 비재직자 탭엔 한양대·삼성전자교수진 등
+    학부생 공정교육이 올라온다. 이걸 안 봐서 한양대 특별과정을 놓쳤다(2026-07-15).
+
+    목록: fnMoveView('SEQ','TAB') 링크 + 제목. 제목에 '(마감)'이 붙으면 종료.
+    상세: WoUser0101V.do?...&WO_SEQ=SEQ 에서 날짜쌍 2개(모집/교육) + 대상 파싱.
+    """
+    raw = http(KSIA_LIST, raw=True)
+    rows = re.findall(r"fnMoveView\('(\d+)','\d+'\);\"[^>]*>([^<]+)</a>", raw)
+    out = []
+    for seq, title in rows:
+        title = html.unescape(title).strip()
+        if "마감" in title:
+            continue
+        # 상세에서 날짜 확정
+        try:
+            detail = strip_tags(http(KSIA_DETAIL + seq, raw=True))
+        except Exception:
+            continue
+        dates = re.findall(r"(\d{4})\.(\d{2})\.(\d{2})\s*~\s*(\d{4})\.(\d{2})\.(\d{2})", detail)
+        if not dates:
+            continue
+        (_, _, _, ry, rm, rd) = dates[0]  # 첫 쌍 = 모집기간, 뒤 3개가 종료일
+        apply_end = f"{ry}-{rm}-{rd}"
+        if apply_end < today:  # 모집 마감 지남
+            continue
+        edu = ""
+        if len(dates) >= 2:
+            d = dates[1]
+            edu = f"{d[0]}-{d[1]}-{d[2]} ~ {d[3]}-{d[4]}-{d[5]}"
+        # 대상/자격 한 줄 (있으면)
+        tgt = re.search(r"(대상|자격)[^가-힣]{0,3}([가-힣0-9()\s·,]{5,60})", detail)
+        target_note = f" · 대상: {tgt.group(2).strip()}" if tgt else ""
+        # 제목 뒤 괄호 안내문구(모집오픈 등)는 떼어낸다
+        clean = re.sub(r"\s*\([^)]*모집[^)]*\)\s*$", "", title)
+        out.append({
+            "target": "edu",
+            "marker": f"KSIA:{seq}",
+            "title": f"{clean} (KSIA)",
+            "core_title": clean,
+            "deadline": apply_end,
+            "status": "신청중",
+            "link": KSIA_DETAIL + seq,
+            "note": f"모집 ~{apply_end}{f' · 교육 {edu}' if edu else ''}{target_note} · KSIA 인프라 비재직자 · ⚠️자격요건 직접 확인",
+        })
+    return out
+
+
 # ---------- 노션 ----------
 
 def norm(s):
@@ -254,7 +314,7 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("wevity", from_wevity)):
+    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity)):
         try:
             got = fn(today)
             items.extend(got)
