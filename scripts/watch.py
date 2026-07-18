@@ -23,7 +23,19 @@ import sys
 import urllib.error
 from datetime import datetime
 
-from notion import CONTEST_DB, EDU_DB, KST, api as notion, http
+from notion import (
+    CALENDAR_DB,
+    CONTEST_DB,
+    EDU_DB,
+    KST,
+    WEEKDAY_KR,
+    api as notion,
+    http,
+    prop_select,
+    prop_text,
+    prop_title,
+    query_all,
+)
 
 DRY = "--dry-run" in sys.argv  # 쓰기 없이 수집 결과만 출력
 
@@ -404,6 +416,86 @@ def add_share_row(item):
     notion("/pages", method="POST", data={"parent": {"database_id": SHARE_DB}, "properties": props})
 
 
+# ---------- 신청완료 교육 → 실행 캘린더 미러 ----------
+# 교육 DB에서 '상태'를 손으로 '✅ 신청완료'로 바꾸면, 다음 실행 때 실행 캘린더에
+# 교육 일정이 자동 추가된다. 캘린더 '메모'에 [CAL:<키>]를 심어 중복을 막는다.
+APPLIED_STATUS = "✅ 신청완료"
+
+
+def parse_edu_dates(note):
+    """'주요 일정' 텍스트에서 교육 기간 (start, end)를 YYYY-MM-DD로 뽑는다. 없으면 (None, None).
+
+    지원 형식:
+      · 교육 2026-07-27 09:00 ~ 2026-07-28 18:00   (ISRC/IDEC/KSIA 자동수집)
+      · 교육 2026-07-24                              (하루짜리)
+      · 교육 7/27(월)~7/29(수)                        (사람이 쓴 자유형식, 올해 연도)
+    """
+    m = re.search(r"교육\s*(\d{4}-\d{2}-\d{2})[^~]*~\s*(\d{4}-\d{2}-\d{2})", note)
+    if m:
+        return m.group(1), m.group(2)
+    m = re.search(r"교육\s*(\d{4}-\d{2}-\d{2})", note)
+    if m:
+        return m.group(1), m.group(1)
+    m = re.search(r"교육\s*(\d{1,2})/(\d{1,2})[^~\d]*(?:~\s*(\d{1,2})/(\d{1,2}))?", note)
+    if m:
+        y = datetime.now(KST).year
+        start = f"{y}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+        end = f"{y}-{int(m.group(3)):02d}-{int(m.group(4)):02d}" if m.group(3) else start
+        return start, end
+    return None, None
+
+
+def add_calendar_row(title, start, end, key, link, deadline):
+    """실행 캘린더에 교육 일정 1건 추가."""
+    clean = re.sub(r"^[✅❌]\s*", "", title).strip()
+    memo = f"교육 신청완료(자동등록){f' · {link}' if link else ''} · [CAL:{key}]"
+    props = {
+        "할 일": {"title": [{"text": {"content": f"🎓 {clean[:180]}"}}]},
+        "구분": {"select": {"name": "IDEC"}},
+        "메모": {"rich_text": [{"text": {"content": memo[:2000]}}]},
+    }
+    # 교육 날짜가 있으면 그걸, 없으면 신청마감일이라도 넣어 캘린더에서 보이게 한다.
+    d_start, d_end = (start, end) if start else (deadline, None)
+    if d_start:
+        date = {"start": d_start}
+        if d_end and d_end != d_start:
+            date["end"] = d_end
+        props["날짜"] = {"date": date}
+        try:
+            wd = datetime.strptime(d_start, "%Y-%m-%d").weekday()
+            props["요일"] = {"rich_text": [{"text": {"content": WEEKDAY_KR[wd]}}]}
+        except ValueError:
+            pass
+    notion("/pages", method="POST", data={"parent": {"database_id": CALENDAR_DB}, "properties": props})
+
+
+def mirror_applied_to_calendar():
+    """교육 DB에서 상태='✅ 신청완료'인 행을 실행 캘린더에 미러. 추가한 (제목, 시작, 끝) 목록 반환."""
+    cal_keys = set()
+    for pg in query_all(CALENDAR_DB):
+        cal_keys.update(re.findall(r"\[CAL:([^\]]+)\]", prop_text(pg, "메모")))
+
+    added = []
+    for pg in query_all(EDU_DB):
+        if prop_select(pg, "상태") != APPLIED_STATUS:
+            continue
+        note = prop_text(pg, "주요 일정")
+        m = re.search(r"\[SRC:([^\]]+)\]", note)
+        key = m.group(1) if m else f"EDU:{pg['id'][:8]}"
+        if key in cal_keys:
+            continue
+        title = prop_title(pg, "교육명")
+        start, end = parse_edu_dates(note)
+        link = pg["properties"].get("링크", {}).get("url") or ""
+        deadline = (pg["properties"].get("신청마감", {}).get("date") or {}).get("start", "")
+        deadline = deadline[:10] if deadline else ""
+        if not DRY:
+            add_calendar_row(title, start, end, key, link, deadline)
+        cal_keys.add(key)
+        added.append((title, start, end))
+    return added
+
+
 # ---------- main ----------
 
 def main():
@@ -453,6 +545,17 @@ def main():
     except urllib.error.HTTPError as e:
         errors.append(f"공유용 DB 접근 실패(통합 연결 확인): HTTP {e.code}")
         print(f"[공유용] 통합 연결 안 됨 (HTTP {e.code}) — 개인 DB는 정상 처리됨", file=sys.stderr)
+
+    # 신청완료 교육 → 실행 캘린더 미러 (사람이 상태를 '✅ 신청완료'로 바꾼 건만)
+    try:
+        cal_added = mirror_applied_to_calendar()
+        for t, s, e in cal_added:
+            span = s if s == e or not e else f"{s}~{e}"
+            print(f"  {'· 미리보기' if DRY else '→ 캘린더'}: {t} ({span or '날짜미상'})")
+        print(f"[캘린더] 신청완료 미러 {len(cal_added)}건" + (" (dry-run)" if DRY else ""))
+    except urllib.error.HTTPError as e:
+        errors.append(f"캘린더 미러 실패: HTTP {e.code}")
+        print(f"[캘린더] 실패 (HTTP {e.code})", file=sys.stderr)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
