@@ -496,6 +496,39 @@ def mirror_applied_to_calendar():
     return added
 
 
+# ---------- 만료된 미신청 교육 정리 ----------
+# 상태가 '✅ 신청완료'가 아닌 교육 중 신청마감 또는 교육이 지난 것을 노션 휴지통으로 보낸다.
+# (신청완료는 참여 기록이라 영구 보존, 날짜를 알 수 없는 항목은 판단 불가라 보존.)
+def _passed(dstr, today):
+    return bool(dstr) and dstr[:10] < today
+
+
+# 참여·이수 흔적이 있으면(상태 외에 제목/메모로 표시한 경우까지) 만료돼도 보존한다.
+KEEP_RE = re.compile(r"✅|수강\s*완료|신청\s*완료|참여\s*완료|이수|수료")
+
+
+def cleanup_expired(today):
+    """만료된 미신청 교육을 휴지통으로. 삭제한 (제목, 사유) 목록 반환."""
+    removed = []
+    for pg in query_all(EDU_DB):
+        title = prop_title(pg, "교육명")
+        note = prop_text(pg, "주요 일정")
+        if prop_select(pg, "상태") == APPLIED_STATUS or KEEP_RE.search(title) or KEEP_RE.search(note):
+            continue  # 신청완료·참여이수 기록은 보존
+        deadline = (pg["properties"].get("신청마감", {}).get("date") or {}).get("start", "")
+        _, edu_end = parse_edu_dates(prop_text(pg, "주요 일정"))
+        reason = ""
+        if _passed(deadline, today):
+            reason = f"신청마감 {deadline[:10]} 지남"
+        elif _passed(edu_end, today):
+            reason = f"교육 {edu_end} 지남"
+        if reason:
+            if not DRY:
+                notion(f"/pages/{pg['id']}", method="PATCH", data={"archived": True})
+            removed.append((title, reason))
+    return removed
+
+
 # ---------- main ----------
 
 def main():
@@ -556,6 +589,16 @@ def main():
     except urllib.error.HTTPError as e:
         errors.append(f"캘린더 미러 실패: HTTP {e.code}")
         print(f"[캘린더] 실패 (HTTP {e.code})", file=sys.stderr)
+
+    # 만료된 미신청 교육 정리 (상태!=신청완료 & 신청마감/교육 지남 → 휴지통)
+    try:
+        removed = cleanup_expired(today)
+        for t, why in removed:
+            print(f"  {'· 삭제예정' if DRY else '🗑 삭제'}: {t[:40]} ({why})")
+        print(f"[정리] 만료 미신청 {len(removed)}건" + (" (dry-run)" if DRY else " 휴지통"))
+    except urllib.error.HTTPError as e:
+        errors.append(f"정리 실패: HTTP {e.code}")
+        print(f"[정리] 실패 (HTTP {e.code})", file=sys.stderr)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
