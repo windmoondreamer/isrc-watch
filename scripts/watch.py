@@ -281,6 +281,55 @@ def from_univ(today):
     return out
 
 
+# 한국나노기술원(KANC) 교육 게시판 — 반도체 단위공정(포토·식각·박막·CMP)·장비 실습 교육.
+# 나노팹 보유 기관이라 IDEC(설계 위주)·ISRC가 안 잡는 '공정' 실습이 여기 뜬다.
+# 게시판(css.kanc.re.kr)이라 목록엔 마감일이 없어 발견까지만 하고 마감·자격은 게시글로 넘긴다.
+KANC_LIST = "https://css.kanc.re.kr/cgnb02/snb05.do"
+KANC_BASE = "https://css.kanc.re.kr"
+# 이 게시판은 교육 전용이지만 학점은행제 안내 등 행정글도 섞여, 교육성 키워드가 있어야 등록한다.
+KANC_KEYWORDS = ("교육", "실습", "육성", "양성", "모집", "공정", "장비")
+
+
+def from_kanc(today):
+    """KANC 교육 게시판에서 반도체 공정·장비 교육 모집 글을 골라낸다."""
+    out = []
+    try:
+        raw = http(KANC_LIST, raw=True)
+    except Exception as e:
+        print(f"[KANC] 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
+        return out
+    for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
+        a = re.search(r'<a[^>]*href="([^"]*mode=view[^"]*)"[^>]*>(.*?)</a>', tr, re.S)
+        if not a:
+            continue
+        title = strip_tags(a.group(2))
+        if "마감" in title:  # [마감] 접두가 붙은 글은 종료
+            continue
+        if not any(k in title for k in KANC_KEYWORDS):
+            continue
+        cid = re.search(r"cid=(\d+)", tr)
+        seq = cid.group(1) if cid else title[:24]
+        date = re.search(r"20\d\d[-.]\d\d[-.]\d\d", tr)
+        if date:  # 오래된 회차(120일 초과)는 지난 것으로 본다
+            try:
+                d = datetime.strptime(re.sub(r"[.]", "-", date.group(0)), "%Y-%m-%d").date()
+                if (datetime.now(KST).date() - d).days > 120:
+                    continue
+            except ValueError:
+                pass
+        href = html.unescape(a.group(1))
+        out.append({
+            "target": "edu",
+            "marker": f"KANC:{seq}",
+            "title": f"{title[:70]} (KANC)",
+            "core_title": title,
+            "deadline": "",  # 게시판 목록엔 마감일 없음 → 게시글 직접 확인
+            "status": "신청중",
+            "link": KANC_BASE + href,
+            "note": f"한국나노기술원 교육 · 게시 {date.group(0) if date else '?'} · ⚠️마감일·자격·비용은 게시글 직접 확인 필요",
+        })
+    return out
+
 
 # ---------- 노션 ----------
 
@@ -535,7 +584,7 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("wevity", from_wevity), ("대학게시판", from_univ)):
+    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("KANC", from_kanc), ("wevity", from_wevity), ("대학게시판", from_univ)):
         try:
             got = fn(today)
             items.extend(got)
