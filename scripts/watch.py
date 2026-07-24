@@ -331,6 +331,45 @@ def from_kanc(today):
     return out
 
 
+# 나노종합기술원(NNFC) 교육일정 — 반도체 첨단패키징 등 공정 전문교육.
+# 교육 목록 페이지는 JS 렌더라 안 되지만, 그 페이지가 부르는 JSON API(list_json.do)를 직접 친다.
+# 캘린더 이벤트 형식(title + start/end epoch ms)이라 접수 마감일은 없어 게시글 확인으로 넘긴다.
+NNFC_JSON = "https://www.nnfc.re.kr/prog/edu/kor/sub01_03_04/list_json.do"
+NNFC_VIEW = "https://www.nnfc.re.kr/prog/edu/kor/sub01_03_04/list.do"
+NNFC_KEYWORDS = ("반도체", "공정", "패키징", "소자", "리소", "증착", "식각", "박막")
+
+
+def from_nnfc(today):
+    """NNFC 교육일정 JSON에서 반도체 공정 교육만. 교육 종료일이 지난 회차는 제외."""
+    raw = http(NNFC_JSON, headers={"X-Requested-With": "XMLHttpRequest"})
+    out = []
+    for ev in raw if isinstance(raw, list) else []:
+        title = (ev.get("title") or "").strip()
+        if not any(k in title for k in NNFC_KEYWORDS):
+            continue
+        if "마감" in title or "완료" in title or "종료" in title:  # (모집완료) 등 접수 끝난 회차
+            continue
+        s, e = ev.get("start"), ev.get("end")
+        edu = ""
+        if s:
+            sd = datetime.fromtimestamp(s / 1000, KST).strftime("%Y-%m-%d")
+            ed = datetime.fromtimestamp(e / 1000, KST).strftime("%Y-%m-%d") if e else sd
+            if ed < today:  # 교육이 이미 끝난 회차
+                continue
+            edu = f"{sd} ~ {ed}"
+        out.append({
+            "target": "edu",
+            "marker": f"NNFC:{ev.get('_id')}",
+            "title": f"{title[:70]} (NNFC)",
+            "core_title": title,
+            "deadline": "",  # JSON엔 교육일만 있고 접수 마감이 없음 → 게시글 확인
+            "status": "예정" if edu and edu[:10] > today else "신청중",
+            "link": NNFC_VIEW,
+            "note": f"나노종합기술원(NNFC){f' · 교육 {edu}' if edu else ''} · ⚠️접수기간·자격·비용은 홈페이지 직접 확인 필요",
+        })
+    return out
+
+
 # ---------- 노션 ----------
 
 def norm(s):
@@ -584,7 +623,7 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("KANC", from_kanc), ("wevity", from_wevity), ("대학게시판", from_univ)):
+    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("KANC", from_kanc), ("NNFC", from_nnfc), ("wevity", from_wevity), ("대학게시판", from_univ)):
         try:
             got = fn(today)
             items.extend(got)
