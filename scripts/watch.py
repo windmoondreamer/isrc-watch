@@ -305,6 +305,10 @@ def from_kanc(today):
         title = strip_tags(a.group(2))
         if "마감" in title:  # [마감] 접두가 붙은 글은 종료
             continue
+        # 개방장비·장비사용 교육은 "해당 장비 직접 사용 계획"이 있는 실사용자 전용이라
+        # (순수 교육·취업 목적 수강 불가) 학부 취업준비생에겐 부적합 → 제외.
+        if any(x in title for x in ("[장비]", "개방장비", "오픈팹", "장비 사용", "장비사용")):
+            continue
         if not any(k in title for k in KANC_KEYWORDS):
             continue
         cid = re.search(r"cid=(\d+)", tr)
