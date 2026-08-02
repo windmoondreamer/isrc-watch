@@ -21,7 +21,7 @@ MAIN_PAGE = "384d82c7252581d6aabafaa6adbc731f"
 # --- 데이터베이스 ---
 EDU_DB = "3244fcb7249c4098aa5a7f81a572c8cb"        # 교육·강의
 CONTEST_DB = "a9e6fc4e940a43628a018bc6220c91d5"    # 공모전·경진대회
-CALENDAR_DB = "7305739ebe3048d082b62d1efb0826b5"   # 실행 캘린더 (여름)
+CALENDAR_DB = "cbf3ebf0330d44dd938e6186cb2bf896"   # 2026 여름 실행 캘린더 (사용자 실사용 DB)
 RETRO_DB = "dea6c521912844b49d5458bb557ef938"      # 주간 회고
 BODY_DB = "bce0e8b176c249f5989e412660cf7ba6"       # 신체 측정
 TRADING_DB = "38fd85ed153f48e3bfe2453e3a423b69"    # 💸 트레이딩 로그 (재미예산)
