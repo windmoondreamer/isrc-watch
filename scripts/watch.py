@@ -633,13 +633,19 @@ def contest_type(title):
 
 
 def to_iso(s):
-    """'2026-07-20 09:00' 또는 '2026-07-20' → ISO8601(KST). 실패 시 None."""
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s, fmt).replace(tzinfo=KST).isoformat()
-        except ValueError:
-            continue
-    return None
+    """'2026-07-20 09:00' → ISO8601(KST), '2026-07-20' → 날짜만. 실패 시 None.
+
+    시각을 모르는데 자정 datetime으로 넣으면 노션이 '9월 18일 오전 12:00'으로 보여줘
+    마감이 그날 0시인 것처럼 읽힌다. 날짜만 있으면 날짜 속성으로 둔다.
+    """
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=KST).isoformat()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def add_row(item):
