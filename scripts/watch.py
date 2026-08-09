@@ -7,7 +7,7 @@ GitHub Actions에서 매일 실행. 클로드 클라우드 루틴은 아웃바�
 소스 → 목적지:
   ISRC (JSON)        → 교육·강의 DB
   IDEC (HTML 테이블)  → 교육·강의 DB
-  wevity (HTML 목록)  → 공모전·경진대회 DB   ※ 반도체 키워드 필터
+  wevity (HTML 목록)  → 공모전·경진대회 DB   ※ 과학/공학 분야, 상세에서 마감일 확인
 
 중복 판정은 제목이 아니라 '주요 일정'에 심는 [SRC:<소스>:<id>] 마커로 한다.
 회차명이 바뀌어도 중복 등록되지 않는다.
@@ -20,6 +20,7 @@ import html
 import os
 import re
 import sys
+import time
 import urllib.error
 from datetime import datetime
 
@@ -39,12 +40,25 @@ from notion import (
 
 DRY = "--dry-run" in sys.argv  # 쓰기 없이 수집 결과만 출력
 
-# 공모전 목록에서 반도체 관련만 걸러내는 키워드
-SEMI_KEYWORDS = ("반도체", "회로설계", "FPGA", "Verilog", "RTL", "소자", "칩설계", "SoC")
-
 
 def strip_tags(s):
     return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", s)).split())
+
+
+def fetch(url, tries=2):
+    """페이지 HTML을 가져온다. 타임아웃이면 한 번 더 시도한다.
+
+    IDEC이 열흘에 서너 번 urlopen timeout으로 통째로 날아가서(그날 IDEC 수집 0건),
+    목록 페이지처럼 실패하면 소스 전체를 잃는 요청에만 쓴다.
+    """
+    for n in range(tries):
+        try:
+            return http(url, raw=True)
+        except Exception as e:
+            if n == tries - 1:
+                raise
+            print(f"[재시도] {url} — {type(e).__name__} {e}", file=sys.stderr)
+            time.sleep(3)
 
 
 # ---------- 소스별 수집 ----------
@@ -86,81 +100,205 @@ def from_isrc(today):
     return list(out.values())
 
 
+# IDEC 수강신청은 목록이 둘로 나뉜다. lst2(아카데미)에 공정·패키징 강좌가 몰려 있어
+# 둘 다 긁는다. 센터명에 '-아카데미'가 붙어 있어 결과에서 구분된다.
+IDEC_LISTS = (
+    ("https://www.idec.or.kr/edu/apply/list/", "석·박사 우선"),
+    ("https://www.idec.or.kr/edu/apply/lst2/", "재직자 우선(아카데미)"),
+)
+
+# 2학기 개강일. 평일 대면·실시간 교육은 이 날부터 수업과 겹쳐 못 간다.
+SEMESTER_START = "2026-09-01"
+# 학적상 학년. 2026-2까지 3학년, 2027학년도부터 4학년(전공 48/60 → 4학년에 12학점).
+MY_GRADE = 3
+
+
+def attend_warnings(target, edu_s):
+    """실제로 못 듣는 강좌를 노트 앞에 표시한다. 판단 근거는 남기고 등록은 유지한다.
+
+    IDEC 수강대상은 '권장'이라 표기와 실제 신청 가능 여부가 자주 어긋난다
+    (3학년이 '학부 4학년 이상' 강좌를 신청하는 건 되고,
+     '학부생(졸업생 이상만)'처럼 학부를 적어놓고 재학생을 빼기도 한다).
+    그래서 자동으로 빼지 않고 경고만 붙인다.
+    """
+    warn = []
+    if target:
+        if "학부" not in target:
+            warn.append("⚠️학부생 대상 아님")
+        elif "졸업생" in target:
+            warn.append("⚠️학부 재학생 제외(졸업생 이상)")
+        else:
+            # '학부 4학년 이상' 같은 표기. 권장일 뿐이라 빼지는 않고 표시만 한다.
+            g = re.search(r"학부\s*(\d)\s*(?:학년|년차)", target)
+            if g and int(g.group(1)) > MY_GRADE:
+                warn.append(f"⚠️학부 {g.group(1)}학년 이상(현재 {MY_GRADE}학년)")
+    if edu_s >= SEMESTER_START:
+        warn.append("⚠️2학기 개강 후 — 참석 불가")
+    return warn
+
+
 def from_idec(today):
-    """IDEC 단기교육 수강신청 목록(HTML 테이블).
+    """IDEC 단기교육 수강신청 목록(HTML 테이블) 두 종류.
 
     컬럼: 센터명 | 강의형태 | 강의제목 | 강의일자+신청기간 | 상태
     신청기간이 강의일자 뒤에 붙어 한 셀에 들어 있어 날짜 2쌍을 순서로 구분한다.
+
+    목록의 신청기간은 '우선신청 + 전체신청'을 합친 구간이라 학부·비재직자가 실제로
+    신청을 넣을 수 있는 날과 다르다(예: 목록 08-04~08-13 = 재직자 08-04~08-10 +
+    전체 08-11~08-13). 진짜 시작일은 상세의 '전 체' 구간에서 뽑는다.
+    끝나는 날은 둘이 같아서 마커·마감은 목록 값을 그대로 쓴다(기존 등록분과 호환).
     """
-    raw = http("https://www.idec.or.kr/edu/apply/list/", raw=True)
     out = []
-    # tr 여는 태그까지 통째로 잡는다 — 강좌번호(no=)가 <tr onclick=...>에 들어 있다.
-    for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
-        cells = [strip_tags(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
-        if len(cells) < 5 or cells[0] == "센터명":
-            continue
-        center, _fmt, title, dates, status = cells[0], cells[1], cells[2], cells[3], cells[4]
-        found = re.findall(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})", dates)
-        if len(found) < 2:
-            continue
-        (edu_s, edu_e), (app_s, app_e) = found[0], found[1]
-        if app_e < today:  # 신청 마감 지난 강좌는 스킵
-            continue
-        # 상세 페이지에서 수강대상을 뽑아 학부생 신청 가능 여부를 메모에 남긴다.
-        # (IDEC 강좌는 대부분 "학부3학년 이상"이지만 "석박사 우선" 표기가 헷갈려서 명시한다)
-        target = ""
-        no = re.search(r"no=(\d+)", tr)
-        if no:
-            try:
-                det = strip_tags(http(f"https://www.idec.or.kr/edu/apply/view/?&no={no.group(1)}", raw=True))
-                m = re.search(r"수강대상\s*(.+?)\s*(?:사전지식|선수과목|강의목)", det)
-                if m:
-                    target = m.group(1).strip()[:40]
-            except Exception:
-                pass
-        out.append({
-            "target": "edu",
-            # IDEC은 안정적인 강좌 ID가 노출되지 않아 센터+제목+신청마감으로 식별자를 만든다.
-            "marker": f"IDEC:{center}-{title}-{app_e}"[:90],
-            "title": f"{title} ({center})",
-            "core_title": title,
-            "deadline": app_e,
-            "status": "신청중" if "신청중" in status else "예정",
-            "link": "https://www.idec.or.kr/edu/apply/list/",
-            "note": (
-                f"신청 {app_s} ~ {app_e} · 교육 {edu_s} ~ {edu_e} · {center}"
-                f"{f' · 대상: {target}' if target else ''}"
-                f" · IDEC 상태:{status} · ⚠️수강신청 정오 오픈·선착순(석박사·재직자 우선)"
-            ),
-        })
+    for list_url, kind in IDEC_LISTS:
+        raw = fetch(list_url)
+        # tr 여는 태그까지 통째로 잡는다 — 강좌번호(no=)가 <tr onclick=...>에 들어 있다.
+        for tr in re.findall(r"<tr[^>]*>.*?</tr>", raw, re.S):
+            cells = [strip_tags(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+            if len(cells) < 5 or cells[0] == "센터명":
+                continue
+            center, _fmt, title, dates, status = cells[0], cells[1], cells[2], cells[3], cells[4]
+            found = re.findall(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})", dates)
+            if len(found) < 2:
+                continue
+            (edu_s, edu_e), (app_s, app_e) = found[0], found[1]
+            if app_e < today:  # 신청 마감 지난 강좌는 스킵
+                continue
+            # 상세 페이지에서 수강대상과 '전 체' 신청구간을 뽑는다.
+            # (IDEC 강좌는 대부분 "학부3학년 이상"이지만 "석박사 우선" 표기가 헷갈려서 명시한다)
+            target, whole, priority_only = "", None, False
+            no = re.search(r"no=(\d+)", tr)
+            if no:
+                try:
+                    det = strip_tags(http(f"https://www.idec.or.kr/edu/apply/view/?&no={no.group(1)}", raw=True))
+                    m = re.search(r"수강대상\s*(.+?)\s*(?:사전지식|선수과목|강의목)", det)
+                    if m:
+                        # 40자로 자르면 뒤에 붙는 단서를 놓친다. 광운대 '첨단 반도체 재료 및
+                        # 소자 설계'가 딱 잘린 자리 뒤에서 '학부생(졸업생 이상만)'이라고 못 박는다.
+                        target = m.group(1).strip()[:120]
+                    w = re.search(r"전\s*체\s*:\s*(\d{4}-\d{2}-\d{2})[^~]*~\s*(\d{4}-\d{2}-\d{2})", det)
+                    if w:
+                        whole = w.group(1, 2)
+                    elif "신청 및 취소기간" in det:
+                        # 우선대상 전용 강좌(전체 구간 없음) — 학부생은 신청 자체가 안 된다.
+                        priority_only = True
+                except Exception:
+                    pass  # 상세를 못 읽으면 목록 정보만으로 등록한다
+            # 전체 구간이 없거나 시작>끝으로 뒤집혀 있으면(고려대 아카데미가 이렇게 낸다)
+            # 비재직자·학부생은 신청 창이 아예 안 열린다 — 등록해봐야 못 넣는다.
+            if priority_only or (whole and whole[0] > whole[1]):
+                continue
+            if whole and whole[1] < today:
+                continue
+            warn = attend_warnings(target, edu_s)
+            out.append({
+                "target": "edu",
+                # IDEC은 안정적인 강좌 ID가 노출되지 않아 센터+제목+신청마감으로 식별자를 만든다.
+                "marker": f"IDEC:{center}-{title}-{app_e}"[:90],
+                "title": f"{title} ({center})",
+                "core_title": title,
+                "deadline": app_e,
+                "status": "신청중" if "신청중" in status else "예정",
+                "link": list_url,
+                "note": (
+                    f"{' '.join(warn) + ' · ' if warn else ''}"
+                    f"신청 {app_s} ~ {app_e} · 교육 {edu_s} ~ {edu_e} · {center}"
+                    f"{f' · 학부·비재직자 신청 {whole[0]} ~ {whole[1]}' if whole else ''}"
+                    f"{f' · 대상: {target}' if target else ''}"
+                    f" · IDEC 상태:{status} · ⚠️수강신청 정오 오픈·선착순({kind})"
+                ),
+            })
     return out
 
 
+# 위비티 분야코드 22 = 과학/공학. 예전엔 20(웹/모바일)을 반도체 키워드로 걸렀는데
+# 목록 제목에 '반도체'가 들어가는 공모전이 거의 없어 매일 0건이었다(2026-08-09 수정).
+# 하드웨어·임베디드·경진대회는 전부 22에 모이므로 카테고리 자체를 신뢰하고,
+# 나이·신분 때문에 애초에 못 나가는 것만 걸러낸다.
+WEVITY_LIST = "https://www.wevity.com/?c=find&s=1&gub=1&cidx=22"
+WEVITY_PAGES = 2          # 목록 1페이지 15건. 2페이지면 접수중인 건 대부분 덮는다
+WEVITY_MAX_DETAIL = 25    # 상세 조회 상한 (1건당 1요청)
+
+# 제목만 봐도 대상이 아닌 것 — 상세를 볼 필요도 없다
+WEVITY_SKIP_TITLE = ("청소년", "중학생", "고교생", "고등학생", "초등", "어린이", "유아", "학부모", "교원", "교사")
+# 상세 '응모대상'은 고정 분류(대학생/일반인/청소년/어린이/제한없음/기타)다.
+# '기타'는 기업 공모전이 흔히 쓰는 값이라 살려야 한다 — 초·중·고 전용만 걸러낸다.
+WEVITY_TARGET_KIDS = ("청소년", "어린이", "초등")
+
+
+def wevity_detail(ix):
+    """상세페이지의 정보 테이블을 dict로. 목록엔 D-day뿐이라 실제 마감일은 여기 있다."""
+    raw = fetch(f"{WEVITY_LIST}&gbn=view&ix={ix}")
+    m = re.search(r'<ul class="cd-info-list">(.*?)</ul>', raw, re.S)
+    if not m:
+        return {}
+    info = {}
+    for li in re.findall(r"<li[^>]*>(.*?)</li>", m.group(1), re.S):
+        t = strip_tags(li)
+        for key in ("접수기간", "응모대상", "주최/주관", "1등 상금", "총 상금", "홈페이지"):
+            if t.startswith(key):
+                info[key] = t[len(key):].strip()
+                break
+    return info
+
+
 def from_wevity(today):
-    """위비티 과학/공학 공모전 목록에서 반도체 관련만."""
-    raw = http("https://www.wevity.com/?c=find&s=1&gub=1&cidx=20", raw=True)
-    out = []
-    for li in re.findall(r"<li[^>]*>(.*?)</li>", raw, re.S):
-        text = strip_tags(li)
-        if "D-" not in text or len(text) < 20:
+    """위비티 과학/공학 공모전 — 접수중인 것만, 상세에서 마감일·응모대상 확인."""
+    out, seen, detail_calls = [], set(), 0
+    for gp in range(1, WEVITY_PAGES + 1):
+        raw = fetch(f"{WEVITY_LIST}&gp={gp}")
+        ul = re.search(r'<ul class="list">(.*?)</ul>', raw, re.S)
+        if not ul:
             continue
-        if not any(k in text for k in SEMI_KEYWORDS):
-            continue
-        ix = re.search(r"ix=(\d+)", li)
-        if not ix:
-            continue
-        # "D-12 SPECIAL 제목 분야1, 분야2" → 제목만 남기기 어려워 앞부분을 그대로 쓴다.
-        title = re.sub(r"^D-\d+\s*(SPECIAL\s*)?", "", text)[:80]
-        out.append({
-            "target": "contest",
-            "marker": f"WEVITY:{ix.group(1)}",
-            "title": title,
-            "core_title": title,
-            "deadline": "",  # 목록엔 D-day만 있어 정확한 날짜는 상세 확인 필요
-            "status": "접수중",
-            "link": f"https://www.wevity.com/?c=find&s=1&gub=1&cidx=20&gbn=view&ix={ix.group(1)}",
-            "note": f"위비티 발견 · {text[:100]} · ⚠️접수마감일·자격요건 직접 확인 필요",
-        })
+        for li in re.findall(r"<li[^>]*>(.*?)</li>", ul.group(1), re.S):
+            ix = re.search(r"ix=(\d+)", li)
+            if not ix or ix.group(1) in seen:
+                continue
+            text = strip_tags(li)
+            # D-N만 남긴다. D+N은 이미 마감된 공고.
+            if not re.search(r"\bD-\d+", text):
+                continue
+            # "제목 [SPECIAL] 분야 : a, b 주최사 D-25 접수중 9,789"
+            title = re.split(r"\s*분야\s*:", text)[0]
+            title = re.sub(r"\s*(SPECIAL|IDEA)\s*$", "", title).strip()
+            if not title or any(k in title for k in WEVITY_SKIP_TITLE):
+                continue
+            if detail_calls >= WEVITY_MAX_DETAIL:
+                continue
+            seen.add(ix.group(1))
+            detail_calls += 1
+            info = wevity_detail(ix.group(1))
+            time.sleep(0.3)
+
+            target = info.get("응모대상", "")
+            tokens = [t.strip() for t in target.split(",") if t.strip()]
+            if tokens and all(any(k in t for k in WEVITY_TARGET_KIDS) for t in tokens):
+                continue  # 초·중·고 전용
+
+            period = info.get("접수기간", "")
+            dates = re.findall(r"\d{4}-\d{2}-\d{2}", period)
+            deadline = dates[-1] if dates else ""
+            status = "예정" if "접수예정" in text else "접수중"
+
+            note = " · ".join(x for x in (
+                "위비티",
+                f"주최 {info['주최/주관']}" if info.get("주최/주관") else "",
+                f"대상 {target}" if target else "",
+                f"접수 {period}" if period else "",
+                f"1등 {info['1등 상금']}" if info.get("1등 상금") else "",
+                f"공식 {info['홈페이지']}" if info.get("홈페이지") else "",
+                "" if deadline else "⚠️접수마감일 직접 확인 필요",
+            ) if x)
+
+            out.append({
+                "target": "contest",
+                "marker": f"WEVITY:{ix.group(1)}",
+                "title": title[:120],
+                "core_title": title[:120],
+                "deadline": deadline,
+                "status": status,
+                "link": f"{WEVITY_LIST}&gbn=view&ix={ix.group(1)}",
+                "note": note,
+            })
     return out
 
 
@@ -411,6 +549,53 @@ def existing_rows(db_id, title_prop, note_prop="주요 일정"):
         cursor = res["next_cursor"]
 
 
+def class_periods(note):
+    """메모 문자열에서 '실제로 그 자리에 있어야 하는' 날짜 구간만 뽑는다.
+
+    같은 메모에 신청기간과 교육기간이 섞여 있어(신청 08-04~08-13 · 교육 08-18~08-19)
+    날짜쌍을 통째로 긁으면 신청창까지 일정으로 오해한다. '·'로 끊어서
+    신청·모집·접수가 붙은 조각은 버린다. ISRC처럼 이론/실습이 나뉜 행은 둘 다 잡힌다.
+    """
+    out = []
+    for seg in note.split("·"):
+        if any(k in seg for k in ("신청", "모집", "접수")):
+            continue
+        out.extend(re.findall(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})", seg))
+    return out
+
+
+def booked_periods():
+    """'✅ 신청완료' 행이 잡아먹은 날짜 구간 — [(교육명, 시작, 끝), ...]."""
+    out, cursor = [], None
+    while True:
+        payload = {"page_size": 100}
+        if cursor:
+            payload["start_cursor"] = cursor
+        res = notion(f"/databases/{EDU_DB}/query", method="POST", data=payload)
+        for page in res["results"]:
+            props = page["properties"]
+            if (props.get("상태", {}).get("select") or {}).get("name") != "✅ 신청완료":
+                continue
+            title = "".join(t["plain_text"] for t in props.get("교육명", {}).get("title", []))
+            note = "".join(t["plain_text"] for t in props.get("주요 일정", {}).get("rich_text", []))
+            out.extend((title, s, e) for s, e in class_periods(note))
+        if not res.get("has_more"):
+            return out
+        cursor = res["next_cursor"]
+
+
+def conflicts(item, booked):
+    """이미 신청한 교육과 날짜가 겹치는지. 겹치면 경고 문구를 만든다."""
+    hits = []
+    for s, e in class_periods(item["note"]):
+        for title, bs, be in booked:
+            if s <= be and bs <= e:  # 구간 교집합
+                hits.append(f"{title}({bs[5:]}~{be[5:]})")
+    # 이론/실습처럼 한 강좌가 여러 구간이면 같은 이름이 겹쳐 잡힌다
+    hits = list(dict.fromkeys(hits))
+    return f"⚠️충돌: {', '.join(hits)}" if hits else ""
+
+
 def is_known(item, markers, titles):
     if item["marker"] in markers:
         return True
@@ -644,6 +829,12 @@ def main():
         errors.append(f"공모전 DB 접근 실패(통합 연결 확인): HTTP {e.code}")
         contest_markers, contest_titles = set(), None
 
+    try:
+        booked = booked_periods()
+    except Exception as e:  # 충돌 표시는 부가 정보라 실패해도 등록은 계속한다
+        errors.append(f"신청완료 일정 조회 실패: {type(e).__name__} {e}")
+        booked = []
+
     new = []
     for i in items:
         if i["target"] == "contest" and contest_titles is None:
@@ -651,6 +842,8 @@ def main():
         titles = edu_titles if i["target"] == "edu" else contest_titles
         markers = edu_markers if i["target"] == "edu" else contest_markers
         if not is_known(i, markers, titles):
+            if i["target"] == "edu" and (c := conflicts(i, booked)):
+                i["note"] = f"{c} · {i['note']}"
             new.append(i)
 
     print(f"\n[{today}] 수집 {len(items)}건 / 신규 {len(new)}건" + (" (dry-run: 등록 안 함)" if DRY else ""))
