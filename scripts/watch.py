@@ -17,12 +17,14 @@ GitHub Actions에서 매일 실행. 클로드 클라우드 루틴은 아웃바�
 """
 
 import html
+import json
 import os
 import re
 import sys
 import time
 import urllib.error
-from datetime import datetime
+import urllib.parse
+from datetime import datetime, timedelta
 
 from notion import (
     CALENDAR_DB,
@@ -39,13 +41,15 @@ from notion import (
 )
 
 DRY = "--dry-run" in sys.argv  # 쓰기 없이 수집 결과만 출력
+# 노션 토큰 없이 소스 파서만 검증한다(새 소스를 붙일 때 로컬에서 돌려보는 용도).
+COLLECT_ONLY = "--collect-only" in sys.argv
 
 
 def strip_tags(s):
     return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", s)).split())
 
 
-def fetch(url, tries=2):
+def fetch(url, tries=2, encoding="utf-8"):
     """페이지 HTML을 가져온다. 타임아웃이면 한 번 더 시도한다.
 
     IDEC이 열흘에 서너 번 urlopen timeout으로 통째로 날아가서(그날 IDEC 수집 0건),
@@ -53,7 +57,7 @@ def fetch(url, tries=2):
     """
     for n in range(tries):
         try:
-            return http(url, raw=True)
+            return http(url, raw=True, encoding=encoding)
         except Exception as e:
             if n == tries - 1:
                 raise
@@ -512,6 +516,312 @@ def from_nnfc(today):
     return out
 
 
+# ---------- 마감일 없는 '발견' 항목의 자동 만료 ----------
+# 뉴스 기사·게시판 글은 신청마감이 없다. 그대로 두면 노션에 영구히 쌓여
+# cleanup_expired가 손대지 못한다(날짜를 모르면 보존이 원칙이라서).
+# 그래서 발견 시점 기준 유효기간을 메모에 심고, 정리 단계가 그것도 만료로 본다.
+EXPIRE_RE = re.compile(r"\[EXPIRE:(\d{4}-\d{2}-\d{2})\]")
+
+
+def _age_days(dstr):
+    """게시일이 며칠 지났는지. 파싱 실패면 None."""
+    try:
+        d = datetime.strptime(dstr[:10].replace(".", "-"), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (datetime.now(KST).date() - d).days
+
+
+def _expire(base, days):
+    try:
+        d = datetime.strptime(base[:10].replace(".", "-"), "%Y-%m-%d").date()
+    except ValueError:
+        d = datetime.now(KST).date()
+    return f"[EXPIRE:{(d + timedelta(days=days)).strftime('%Y-%m-%d')}]"
+
+
+# ---------- 프로그램 유형 분류 ----------
+# 기존 '분야'(공정/설계)는 내용 축이고, 이건 '어떤 형태의 기회인가' 축이다.
+# 앞에 있는 규칙이 이긴다 — 'SK하이닉스 반도체 계약학과'는 기업이 아니라 계약학과다.
+PROGRAM_TYPES = (
+    ("대학 계약학과·학위과정", ("계약학과", "채용조건형", "채용연계형 학과", "학·석사", "석박사",
+                          "석사과정", "학위과정", "특성화대학", "전공트랙", "연계전공")),
+    ("정부 지원 프로그램", ("산업통상", "과기정통부", "중기부", "고용노동부", "국비", "정부지원",
+                      "인력양성사업", "국가장학", "K-반도체", "특성화", "훈련과정")),
+    ("부트캠프·단기 아카데미", ("부트캠프", "아카데미", "캠프", "집중과정", "단기과정", "스쿨",
+                        "워크숍", "워크샵", "하계", "동계", "단기")),
+    ("기업 주관 교육과정", ("채용연계", "채용 연계", "sk하이닉스", "삼성", "커리큘럼", "산학",
+                     "인턴", "현장실습", "기업")),
+)
+DEFAULT_TYPE = "일반 교육과정"
+
+
+AUDIENCE_RE = re.compile(r"([^·]*(?:대상|비재직자|재직자|학부생|대학원생|고교생)[^·]*)")
+
+
+# 원본 페이지 문장을 잘라 온 탓에 조사로 시작하는 파편('대상: 으로 하는 교육입니다')이
+# 섞인다. 그런 값은 정보가 아니라 파싱 실패라 요약에 내보내지 않는다.
+BROKEN_AUDIENCE = re.compile(r"대상\s*:?\s*(으?로|을|를|이|가|은|는)\s")
+
+
+def audience(note):
+    """메모에 소스가 적어둔 신청대상 문구를 뽑는다. 없으면 추측하지 않는다."""
+    m = AUDIENCE_RE.search(note)
+    if not m:
+        return "확인 필요"
+    text = " ".join(m.group(1).split())
+    return "확인 필요" if BROKEN_AUDIENCE.search(text) else text[:60]
+
+
+def program_type(title, note=""):
+    t = f"{title} {note}".lower()
+    for label, keys in PROGRAM_TYPES:
+        if any(k.lower() in t for k in keys):
+            return label
+    return DEFAULT_TYPE
+
+
+# ---------- 기업 뉴스룸 (워드프레스 REST API) ----------
+# 새 교육 프로그램은 공고 게시판보다 뉴스룸에 먼저 뜬다(반도체 커리큘럼·hy-스쿨·계약학과 모두).
+# SK하이닉스 뉴스룸은 wp-json이 열려 있어 HTML 파싱 없이 검색어로 바로 긁힌다(2026-09-02 확인).
+# ※ 삼성전자 뉴스룸(news.samsung.com/kr)은 Akamai가 wp-json·검색을 403으로 막아 미추가.
+# 숏폼·유튜브·인스타·미디어 카테고리는 '찐천재특) 반도체 계약학과 감?' 같은 홍보 카드뉴스라
+# 프로그램 정보가 없다. 정식 기사(PRESS·STORY·TECH&AI)만 남기려고 ID로 제외한다.
+SKHY_EXCLUDE = "1904,95,96,93,94"  # shorts, youtube, instagram, media-library, media
+NEWSROOMS = (
+    ("SK하이닉스 뉴스룸", "SKHY", "https://news.skhynix.co.kr/wp-json/wp/v2/posts", SKHY_EXCLUDE),
+)
+# 프로그램명을 고정 검색하면 새 프로그램을 놓친다. 유형 키워드로 넓게 훑는다.
+NEWS_QUERIES = ("반도체 교육", "인재양성", "인력양성", "계약학과", "아카데미", "부트캠프", "채용연계")
+# 기사는 마감이 없어 오래된 글이 걸리면 계속 남는다. 최근 1년만 본다 —
+# 반년으로 잡으면 작년 가을 개설된 계약학과처럼 '지금 모집 중인 프로그램'을 놓친다.
+NEWS_MAX_AGE = 365
+# 검색이 넓은 만큼 제목으로 한 번 더 거른다('상공의 날 포상'이 계약학과 검색에 걸린다).
+NEWS_KEYWORDS = ("교육", "양성", "아카데미", "계약학과", "스쿨", "커리큘럼", "부트캠프",
+                 "채용연계", "채용 연계", "인재", "강의", "실습", "장학", "산학", "커리어")
+
+
+def from_newsrooms(today):
+    """기업 뉴스룸에서 교육·인재양성 기사만 골라낸다.
+
+    기사는 신청 공고가 아니라 '이런 프로그램이 생겼다'는 단서다. 발견까지만 하고
+    모집 여부·마감은 사람이 확인하게 넘긴다(대학게시판과 같은 취급).
+    """
+    out = []
+    for name, prefix, api_url, exclude in NEWSROOMS:
+        seen = set()
+        for q in NEWS_QUERIES:
+            url = (f"{api_url}?search={urllib.parse.quote(q)}&per_page=8"
+                   f"&categories_exclude={exclude}&_fields=id,date,link,title")
+            try:
+                posts = json.loads(fetch(url))
+            except Exception as e:
+                print(f"[{name}] '{q}' 조회 실패: {type(e).__name__} {e}", file=sys.stderr)
+                continue
+            for p in posts:
+                pid = str(p.get("id", ""))
+                if pid in seen:
+                    continue
+                title = strip_tags(p.get("title", {}).get("rendered", ""))
+                posted = str(p.get("date", ""))[:10]
+                age = _age_days(posted)
+                if age is None or age > NEWS_MAX_AGE:
+                    continue
+                if not any(k in title for k in NEWS_KEYWORDS):
+                    continue
+                seen.add(pid)
+                out.append({
+                    "target": "edu",
+                    "marker": f"{prefix}:{pid}",
+                    "title": f"{title[:70]} ({name})",
+                    "core_title": title,
+                    "deadline": "",  # 기사에는 마감이 없다
+                    "status": "신청중",
+                    "link": p.get("link", ""),
+                    "note": f"{name} · 보도 {posted} · ⚠️기사(모집 공고 아님) — 프로그램 공식 페이지에서 모집 여부 확인 · {_expire(posted, 90)}",
+                })
+            time.sleep(0.3)  # 같은 호스트 연속 호출 완화
+    return out
+
+
+# ---------- SK하이닉스 반도체 커리큘럼 공식 사이트 ----------
+# 노션 페이지를 Oopy로 호스팅한 사이트라 목록 API도 게시판도 없다. 다만 본문 텍스트는
+# 정적으로 내려와, '연도·기수 + 모집/마감' 줄을 회차 단위로 감시하면 새 기수를 잡을 수 있다.
+# ※ apex 도메인(skcurriculum.com)은 DNS가 안 떠서 www가 필수다(2026-09-02 확인).
+SKC_URL = "https://www.skcurriculum.com/"
+SKC_NAME = "SK하이닉스 반도체 커리큘럼"
+SKC_ROUND = re.compile(r"20\d\d|\d+\s*기")
+SKC_ACTION = ("모집", "마감", "지원", "신청", "접수", "선발", "설명회", "안내", "특전")
+
+
+def from_skcurriculum(today):
+    try:
+        raw = fetch(SKC_URL)
+    except Exception as e:
+        print(f"[{SKC_NAME}] 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
+        return []
+    body = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+    lines, seen = [], set()
+    for chunk in html.unescape(re.sub(r"<[^>]+>", "\n", body)).split("\n"):
+        line = " ".join(chunk.split())
+        if not (4 < len(line) < 90) or line in seen:
+            continue
+        seen.add(line)
+        # 회차(연도·기수)와 모집 동사가 함께 있는 줄만 '회차 소식'으로 본다.
+        if SKC_ROUND.search(line) and any(a in line for a in SKC_ACTION):
+            lines.append(line)
+    out = []
+    for line in lines:
+        key = norm(line)[:40]
+        date = re.search(r"20\d\d[-.]\d\d[-.]\d\d", line)
+        out.append({
+            "target": "edu",
+            "marker": f"SKCURR:{key}",
+            "title": f"{line[:70]} ({SKC_NAME})",
+            "core_title": line,
+            "deadline": date.group(0).replace(".", "-") if date else "",
+            "status": "신청중",
+            "link": SKC_URL,
+            "note": f"{SKC_NAME} 공식 사이트 · ⚠️마감·자격은 사이트에서 직접 확인 · {_expire(today, 120)}",
+        })
+    return out
+
+
+# ---------- 정부 보도자료 (산업통상부) ----------
+# 계약학과 신설·특성화대학 선정·인력양성 사업은 기관 공고보다 부처 보도자료가 먼저다.
+# 목록은 상세 링크가 javascript:article.view('seq')라 seq만 뽑아 view URL을 조립한다.
+# ※ 과기정통부(msit.go.kr)는 2026-09-02 확인 시점에 시스템 점검 중이라 미추가.
+MOTIE_LIST = "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c?pageIndex={}"
+MOTIE_PAGES = 2  # 1페이지 10건. 보도자료는 하루 5~10건이라 2페이지면 연휴 뒤에도 덮인다
+MOTIE_VIEW = "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c/{}/view"
+MOTIE_NAME = "산업통상부 보도자료"
+# 보도자료 전체를 담으면 노션이 산업 뉴스로 덮인다. 주제와 교육 키워드가 '둘 다' 있어야 한다.
+MOTIE_TOPIC = ("반도체", "소부장", "시스템반도체")
+MOTIE_EDU = ("인력", "인재", "양성", "교육", "아카데미", "계약학과", "특성화", "부트캠프", "훈련", "장학")
+
+
+def from_motie(today):
+    raw = ""
+    for pg in range(1, MOTIE_PAGES + 1):
+        try:
+            raw += fetch(MOTIE_LIST.format(pg))
+        except Exception as e:
+            print(f"[{MOTIE_NAME}] {pg}페이지 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
+    if not raw:
+        return []
+    out, seen = [], set()
+    for m in re.finditer(r"article\.view\('(\d+)'\)[^>]*>(.*?)</a>", raw, re.S):
+        seq, title = m.group(1), strip_tags(m.group(2))
+        if not title or len(title) < 6:
+            continue
+        if not (any(k in title for k in MOTIE_TOPIC) and any(k in title for k in MOTIE_EDU)):
+            continue
+        if seq in seen:  # 페이지 경계에서 같은 글이 두 번 잡힐 수 있다
+            continue
+        seen.add(seq)
+        out.append({
+            "target": "edu",
+            "marker": f"MOTIE:{seq}",
+            "title": f"{title[:70]} ({MOTIE_NAME})",
+            "core_title": title,
+            "deadline": "",
+            "status": "신청중",
+            "link": MOTIE_VIEW.format(seq),
+            "note": f"{MOTIE_NAME} · ⚠️정책 발표(모집 공고 아님) — 주관기관·모집일정 별도 확인 · {_expire(today, 90)}",
+        })
+    return out
+
+
+# ---------- 대학 반도체 관련 학과 게시판 (성균관대) ----------
+# 계약학과·채용연계 과정 모집은 학과 게시판에 뜨는데 CMS가 학교마다 다르다.
+# 성균관대는 두 곳이 서로 다른 엔진이라 각각 파서를 둔다(둘 다 2026-09-02 실측).
+#   반도체시스템공학과: 자체 oxbbs, BID가 글번호, 페이지 인코딩이 EUC-KR
+#   전자전기공학부 취업공지: notice_job.do, articleNo가 글번호, dl 블록 구조
+SKKU_SEMICON = "https://semicon.skku.edu/index.php?mt=page&mp=4_1&mm=oxbbs&oxid=1"
+SKKU_SEMICON_BASE = "https://semicon.skku.edu/"
+SKKU_ICE = "https://ice.skku.edu/ice/notice_job.do"
+SKKU_ICE_BASE = "https://ice.skku.edu/ice/notice_job.do"
+# 취업 게시판은 일반 채용공고가 대부분이라 교육성 키워드가 있어야 등록한다.
+# 학과 게시판은 재학생 학사 공지가 본업이라 '교육'·'과정' 같은 낱말만으로는
+# 사사표기 안내·의무이수제까지 다 걸린다. 두 겹으로 거른다.
+#   (1) 프로그램 고유명사가 있으면 통과 — 이름만으로 모집 성격이 분명하다
+PROGRAM_NOUNS = ("계약학과", "부트캠프", "아카데미", "커리큘럼", "채용연계", "채용 연계",
+                 "인턴십", "교육과정", "채용조건형")
+#   (2) 아니면 '모집 행위 + 교육성 낱말'이 함께 있어야 한다
+RECRUIT_WORDS = ("모집", "선발", "수강생", "참가자", "지원자", "개설")
+PROGRAM_KEYWORDS = ("교육", "양성", "실습", "과정", "트랙", "스쿨", "캠프", "특성화", "장학")
+# 재학생 학사 행정·학부생이 지원할 수 없는 글은 위를 통과해도 뺀다
+# ('박사장학생 선발'이 '장학'으로, '사사표기 안내'가 '특성화'로 걸려 들어왔다).
+PROGRAM_EXCLUDE = ("박사", "경력직", "석박사통합", "교원", "전임교원", "연구원 채용", "포닥",
+                   "사사표기", "의무 이수", "이수제", "자격조건", "수혜", "등록금", "휴학",
+                   "복학", "졸업요건", "수강신청", "학점 인정", "성적")
+
+
+def is_program_notice(title):
+    """게시판 글 제목이 '지원할 수 있는 프로그램 모집'으로 보이는지."""
+    if any(k in title for k in PROGRAM_EXCLUDE):
+        return False
+    if any(k in title for k in PROGRAM_NOUNS):
+        return True
+    return any(k in title for k in RECRUIT_WORDS) and any(k in title for k in PROGRAM_KEYWORDS)
+
+
+def from_skku(today):
+    out = []
+
+    # 반도체시스템공학과 공지 (EUC-KR)
+    try:
+        raw = fetch(SKKU_SEMICON, encoding="euc-kr")
+        for m in re.finditer(r'href="([^"]*BID=(\d+)[^"]*cmd=view)"[^>]*>(.*?)</a>', raw, re.S):
+            href, bid, title = m.group(1), m.group(2), strip_tags(m.group(3))
+            if not title or len(title) < 5:
+                continue
+            if not is_program_notice(title):
+                continue
+            out.append({
+                "target": "edu",
+                "marker": f"SKKUSEM:{bid}",
+                "title": f"{title[:70]} (성균관대 반도체시스템공학과)",
+                "core_title": title,
+                "deadline": "",
+                "status": "신청중",
+                "link": SKKU_SEMICON_BASE + html.unescape(href),
+                "note": f"성균관대 반도체시스템공학과 공지 · ⚠️마감·자격은 게시글 직접 확인 · {_expire(today, 90)}",
+            })
+    except Exception as e:
+        print(f"[성균관대 반도체시스템] 실패: {type(e).__name__} {e}", file=sys.stderr)
+
+    # 전자전기공학부 취업공지 (dl 블록마다 글번호 + 제목 + 게시일)
+    try:
+        raw = fetch(SKKU_ICE)
+        for blk in re.split(r'(?=<dl class="board-thumb-content-wrap)', raw)[1:]:
+            a = re.search(r"articleNo=(\d+)", blk)
+            d = re.search(r"<dt[^>]*>(.*?)</dt>", blk, re.S)
+            if not (a and d):
+                continue
+            title = re.sub(r"\s*(NEW|새글)\s*$", "", strip_tags(d.group(1)))
+            if not is_program_notice(title):
+                continue
+            posted = re.search(r"20\d\d[-.]\d\d[-.]\d\d", blk)
+            posted = posted.group(0).replace(".", "-") if posted else today
+            if (_age_days(posted) or 0) > 120:  # 지난 회차는 버린다
+                continue
+            out.append({
+                "target": "edu",
+                "marker": f"SKKUICE:{a.group(1)}",
+                "title": f"{title[:70]} (성균관대 전자전기 취업공지)",
+                "core_title": title,
+                "deadline": "",
+                "status": "신청중",
+                "link": f"{SKKU_ICE_BASE}?mode=view&articleNo={a.group(1)}",
+                "note": f"성균관대 전자전기 취업공지 · 게시 {posted} · ⚠️마감·자격은 게시글 직접 확인 · {_expire(posted, 90)}",
+            })
+    except Exception as e:
+        print(f"[성균관대 전자전기] 실패: {type(e).__name__} {e}", file=sys.stderr)
+
+    return out
+
+
 # ---------- 노션 ----------
 
 def norm(s):
@@ -649,7 +959,10 @@ def to_iso(s):
 
 
 def add_row(item):
-    note = f"{item['note']} · [SRC:{item['marker']}]"
+    # 유형(기업/계약학과/부트캠프/정부)은 기존 '분야'(공정/설계)와 다른 축이라
+    # select를 새로 만들지 않고 메모 앞머리에 붙인다 — DB 스키마를 건드리지 않는다.
+    tag = f"[{program_type(item['title'], item['note'])}] " if item["target"] == "edu" else ""
+    note = f"{tag}{item['note']} · [SRC:{item['marker']}]"
     if item["target"] == "edu":
         db_id = EDU_DB
         props = {
@@ -685,7 +998,7 @@ SHARE_DB = "ed571515fdeb4af69f8df0e46b7121a0"
 def add_share_row(item):
     """공유용 DB에 교육 정보를 넣는다. 개인 DB와 달리 사람이 손댄 개인 상태가 없어
     그대로 공개해도 안전하다. 마커는 '안내' 열에 심어 중복을 막는다."""
-    note = f"{item['note']} · [SRC:{item['marker']}]"
+    note = f"[{program_type(item['title'], item['note'])}] {item['note']} · [SRC:{item['marker']}]"
     props = {
         "교육명": {"title": [{"text": {"content": item["title"][:200]}}]},
         "상태": {"select": {"name": item["status"]}},
@@ -801,15 +1114,69 @@ def cleanup_expired(today):
         deadline = (pg["properties"].get("신청마감", {}).get("date") or {}).get("start", "")
         _, edu_end = parse_edu_dates(prop_text(pg, "주요 일정"))
         reason = ""
+        exp = EXPIRE_RE.search(note)
         if _passed(deadline, today):
             reason = f"신청마감 {deadline[:10]} 지남"
         elif _passed(edu_end, today):
             reason = f"교육 {edu_end} 지남"
+        elif exp and _passed(exp.group(1), today):
+            # 마감일을 모르는 발견 항목(뉴스·게시판)의 자동 유효기간이 끝난 경우
+            reason = f"발견 항목 유효기간 {exp.group(1)} 지남"
         if reason:
             if not DRY:
                 notion(f"/pages/{pg['id']}", method="PATCH", data={"archived": True})
             removed.append((title, reason))
     return removed
+
+
+# ---------- 결과 요약 ----------
+
+def render_summary(new, total, errors):
+    """액션 실행 요약을 유형별로 묶어 만든다.
+
+    항목마다 [프로그램명 / 주관기관 / 신청대상 / 마감일 / 출처]를 낸다.
+    모르는 값은 '확인 필요'로 두고 채워 넣지 않는다 — 요약이 근거처럼 읽히면 안 된다.
+    """
+    if not new:
+        out = [f"## ✅ 신규 없음 (수집 {total}건 전부 기등록)\n"]
+        return _with_errors(out, errors)
+
+    out = [f"## 🆕 신규 {len(new)}건 노션 등록\n\n"]
+    # 공모전을 교육 유형으로 묶으면 '경진대회=정부 프로그램'이 된다. 축을 나눈다.
+    groups = {}
+    for i in new:
+        if i["target"] == "edu":
+            groups.setdefault(program_type(i["title"], i["note"]), []).append(i)
+    for label in [t[0] for t in PROGRAM_TYPES] + [DEFAULT_TYPE]:
+        rows = groups.get(label)
+        if not rows:
+            continue
+        out.append(f"### {label} ({len(rows)}건)\n\n")
+        for i in rows:
+            out.append(f"- **{i['title']}**\n")
+            out.append(f"  - 주관: {i.get('source', '?')}\n")
+            out.append(f"  - 신청대상: {audience(i['note'])}\n")
+            out.append(f"  - 마감: {i['deadline'] or '확인 필요'}\n")
+            out.append(f"  - 출처: {i['link']}\n")
+        out.append("\n")
+
+    contests = [i for i in new if i["target"] != "edu"]
+    if contests:
+        out.append(f"### 공모전·경진대회 ({len(contests)}건)\n\n")
+        for i in contests:
+            out.append(f"- **{i['title']}**\n")
+            out.append(f"  - 주관: {i.get('source', '?')}\n")
+            out.append(f"  - 마감: {i['deadline'] or '확인 필요'}\n")
+            out.append(f"  - 출처: {i['link']}\n")
+        out.append("\n")
+    return _with_errors(out, errors)
+
+
+def _with_errors(out, errors):
+    if errors:
+        out.append("\n### ⚠️ 소스 오류\n")
+        out.extend(f"- {e}\n" for e in errors)
+    return "".join(out)
 
 
 # ---------- main ----------
@@ -818,14 +1185,32 @@ def main():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     items, errors = [], []
 
-    for name, fn in (("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia), ("KANC", from_kanc), ("NNFC", from_nnfc), ("wevity", from_wevity), ("대학게시판", from_univ)):
+    sources = (
+        ("ISRC", from_isrc), ("IDEC", from_idec), ("KSIA", from_ksia),
+        ("KANC", from_kanc), ("NNFC", from_nnfc), ("wevity", from_wevity),
+        ("대학게시판", from_univ), ("성균관대", from_skku),
+        ("기업뉴스룸", from_newsrooms), ("SK커리큘럼", from_skcurriculum),
+        ("산업통상부", from_motie),
+    )
+    for name, fn in sources:
         try:
             got = fn(today)
+            for g in got:
+                g.setdefault("source", name)  # 요약의 '주관기관' 칸에 쓴다
             items.extend(got)
             print(f"[{name}] 수집 {len(got)}건")
         except Exception as e:  # 소스 하나가 죽어도 나머지는 계속
             errors.append(f"{name}: {type(e).__name__} {e}")
             print(f"[{name}] 실패: {e}", file=sys.stderr)
+
+    if COLLECT_ONLY:
+        print(f"\n[collect-only] 총 {len(items)}건 — 노션 조회·쓰기 없음")
+        for i in items:
+            kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
+            print(f"  [{kind}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
+        for e in errors:
+            print(f"  ⚠️ {e}")
+        return
 
     edu_markers, edu_titles = existing_rows(EDU_DB, "교육명")
     try:
@@ -856,7 +1241,8 @@ def main():
     for i in new:
         if not DRY:
             add_row(i)
-        print(f"  {'· 미리보기' if DRY else '→ 등록'}: [{i['target']}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
+        kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
+        print(f"  {'· 미리보기' if DRY else '→ 등록'}: [{kind}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
 
     # 공유용 DB 미러링 — 교육 항목만, 개인 정보 없이. 통합 연결 안 됐으면 조용히 건너뛴다.
     try:
@@ -894,19 +1280,10 @@ def main():
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
-            if new:
-                f.write(f"## 🆕 신규 {len(new)}건 노션 등록\n\n")
-                for i in new:
-                    f.write(f"- **{i['title']}**\n  - 마감: {i['deadline'] or '확인 필요'}\n  - {i['note'][:120]}\n")
-            else:
-                f.write(f"## ✅ 신규 없음 (수집 {len(items)}건 전부 기등록)\n")
-            if errors:
-                f.write("\n### ⚠️ 소스 오류\n")
-                for e in errors:
-                    f.write(f"- {e}\n")
+            f.write(render_summary(new, len(items), errors))
 
     # 소스가 전부 죽으면 실패로 알린다 (일부 실패는 통과)
-    if len(errors) == 3:
+    if len(errors) >= len(sources):
         sys.exit(1)
 
 
