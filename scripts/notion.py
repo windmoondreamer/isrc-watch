@@ -5,6 +5,8 @@ watch.py(공고 감시)와 daily.py(일일 루틴)가 공유한다.
 
 import json
 import os
+import ssl
+import urllib.parse
 import urllib.request
 from datetime import timedelta, timezone
 
@@ -13,7 +15,9 @@ API = "https://api.notion.com/v1"
 VERSION = "2022-06-28"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
-TOKEN = os.environ["NOTION_TOKEN"]
+# 소스 파서만 검증하는 --collect-only 실행에서는 토큰이 없어도 import가 되어야 한다.
+# 실제로 노션을 부르는 api()에서만 없으면 막는다.
+TOKEN = os.environ.get("NOTION_TOKEN", "")
 
 # --- 페이지 ---
 MAIN_PAGE = "384d82c7252581d6aabafaa6adbc731f"
@@ -62,7 +66,22 @@ SESSIONS = {
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
 
 
-def http(url, method="GET", data=None, headers=None, raw=False):
+# 중간 인증서를 안 보내는 서버는 파이썬 기본 검증을 통과하지 못한다. 브라우저·curl은
+# AIA로 빠진 인증서를 받아와 열리지만 urllib에는 그 기능이 없고, 서버 설정은 우리가
+# 고칠 수 없다. 그래서 '공개 게시판을 GET으로 읽기만 하는' 호스트에 한해 검증을 끈다.
+# 인증 정보가 오가지 않으므로 노출되는 비밀이 없다 — 노션 API에는 절대 쓰지 않는다.
+INSECURE_HOSTS = ("semicon.skku.edu",)
+_INSECURE_CTX = ssl.create_default_context()
+_INSECURE_CTX.check_hostname = False
+_INSECURE_CTX.verify_mode = ssl.CERT_NONE
+
+
+def _context_for(url):
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return _INSECURE_CTX if host in INSECURE_HOSTS else None
+
+
+def http(url, method="GET", data=None, headers=None, raw=False, encoding="utf-8"):
     req = urllib.request.Request(url, method=method)
     req.add_header("User-Agent", UA)
     for k, v in (headers or {}).items():
@@ -71,12 +90,14 @@ def http(url, method="GET", data=None, headers=None, raw=False):
     if data is not None:
         body = json.dumps(data).encode()
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, body, timeout=30) as resp:
-        payload = resp.read().decode("utf-8", "ignore")
+    with urllib.request.urlopen(req, body, timeout=30, context=_context_for(url)) as resp:
+        payload = resp.read().decode(encoding, "ignore")
     return payload if raw else json.loads(payload)
 
 
 def api(path, method="GET", data=None):
+    if not TOKEN:
+        raise RuntimeError("NOTION_TOKEN이 없습니다 (노션 호출 불가)")
     return http(
         API + path,
         method=method,
