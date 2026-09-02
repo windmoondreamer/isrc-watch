@@ -20,6 +20,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -28,6 +29,8 @@ from datetime import datetime, timedelta
 
 from notion import (
     CALENDAR_DB,
+    INSECURE_HOSTS,
+    UA,
     CONTEST_DB,
     EDU_DB,
     KST,
@@ -49,20 +52,47 @@ def strip_tags(s):
     return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", s)).split())
 
 
+def _curl(url, encoding, timeout=25):
+    """urllib이 응답을 못 받는 서버용 대체 경로.
+
+    산업통상부(motir.go.kr)는 깃허브 러너에서 urllib 요청에 끝내 응답하지 않는데
+    같은 러너의 curl로는 1초 안에 200이 온다(2026-09-02 실측, 헤더를 맞춰도 동일).
+    TLS 협상 차이로 보이고 서버를 고칠 수 없으니 경로를 바꾼다.
+    """
+    cmd = ["curl", "-sL", "--compressed", "-m", str(timeout), "-A", UA]
+    if any(h in url for h in INSECURE_HOSTS):
+        cmd.append("-k")  # 중간 인증서를 안 보내는 호스트 (http()와 같은 예외 적용)
+    r = subprocess.run(cmd + [url], capture_output=True)
+    if r.returncode != 0 or not r.stdout:
+        raise RuntimeError(f"curl 실패 (rc={r.returncode})")
+    return r.stdout.decode(encoding, "ignore")
+
+
 def fetch(url, tries=2, encoding="utf-8"):
-    """페이지 HTML을 가져온다. 타임아웃이면 한 번 더 시도한다.
+    """페이지 HTML을 가져온다. 타임아웃이면 한 번 더 시도하고, 그래도 안 되면 curl로 받는다.
 
     IDEC이 열흘에 서너 번 urlopen timeout으로 통째로 날아가서(그날 IDEC 수집 0건),
     목록 페이지처럼 실패하면 소스 전체를 잃는 요청에만 쓴다.
     """
+    last = None
     for n in range(tries):
         try:
             return http(url, raw=True, encoding=encoding)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                raise  # 차단·404는 재시도해도 같다 (403은 curl로도 뚫리지 않는다)
+            last = e
         except Exception as e:
-            if n == tries - 1:
-                raise
-            print(f"[재시도] {url} — {type(e).__name__} {e}", file=sys.stderr)
+            last = e
+        if n < tries - 1:
+            print(f"[재시도] {url} — {type(last).__name__} {last}", file=sys.stderr)
             time.sleep(3)
+    try:
+        out = _curl(url, encoding)
+        print(f"[curl 우회] {url}", file=sys.stderr)
+        return out
+    except Exception:
+        raise last
 
 
 # ---------- 소스별 수집 ----------

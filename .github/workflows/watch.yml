@@ -22,44 +22,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: (임시) 파이썬 기준 접근 진단
-        run: |
-          python3 - <<'EOF'
-          import urllib.request, ssl, socket, time
-          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-
-          def probe(label, url, headers=None, timeout=20):
-              req = urllib.request.Request(url)
-              req.add_header("User-Agent", UA)
-              for k, v in (headers or {}).items():
-                  req.add_header(k, v)
-              t0 = time.time()
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout) as r:
-                      body = r.read(200)
-                  print(f"  {label:45s} {r.status} ({time.time()-t0:.1f}s) {len(body)}B")
-              except Exception as e:
-                  print(f"  {label:45s} FAIL ({time.time()-t0:.1f}s) {type(e).__name__} {e}")
-
-          print("## 산업부 (파이썬)")
-          probe("motir 목록", "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?pageIndex=1")
-          probe("motir 목록 + Accept 헤더", "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?pageIndex=1",
-                {"Accept": "text/html,application/xhtml+xml", "Accept-Language": "ko-KR,ko;q=0.9",
-                 "Accept-Encoding": "identity", "Connection": "close"})
-          probe("motir 루트", "https://www.motir.go.kr/")
-          print("  DNS:", socket.gethostbyname_ex("www.motir.go.kr")[2])
-
-          print("## SK하이닉스 대체 경로")
-          probe("wp-json", "https://news.skhynix.co.kr/wp-json/wp/v2/posts?per_page=1&_fields=id")
-          probe("RSS feed", "https://news.skhynix.co.kr/feed/")
-          probe("sitemap", "https://news.skhynix.co.kr/sitemap.xml")
-          probe("영문 뉴스룸 wp-json", "https://news.skhynix.com/wp-json/wp/v2/posts?per_page=1&_fields=id")
-
-          print("## 성균관대 ice")
-          probe("ice 목록", "https://ice.skku.edu/ice/notice_job.do", timeout=25)
-          print("  DNS:", socket.gethostbyname_ex("ice.skku.edu")[2])
-          EOF
-
       - name: 교육·공모전 소스 조회 → 노션 등록
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
