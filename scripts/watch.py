@@ -46,6 +46,9 @@ from notion import (
 DRY = "--dry-run" in sys.argv  # 쓰기 없이 수집 결과만 출력
 # 노션 토큰 없이 소스 파서만 검증한다(새 소스를 붙일 때 로컬에서 돌려보는 용도).
 COLLECT_ONLY = "--collect-only" in sys.argv
+# 특정 소스만 돌린다(--only=기업뉴스룸,성균관대). 깃허브 러너가 미국 IP라 한국 기관
+# 일부가 막히는데, 그것만 골라 한국 IP(맥)에서 보충 실행하려고 둔다.
+ONLY = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--only=")), "")
 
 
 def strip_tags(s):
@@ -1224,6 +1227,16 @@ def main():
         ("기업뉴스룸", from_newsrooms), ("SK커리큘럼", from_skcurriculum),
         ("산업통상부", from_motie),
     )
+    if ONLY:
+        want = {n.strip() for n in ONLY.split(",") if n.strip()}
+        unknown = want - {n for n, _ in sources}
+        if unknown:
+            print(f"모르는 소스: {', '.join(sorted(unknown))}", file=sys.stderr)
+            print(f"쓸 수 있는 이름: {', '.join(n for n, _ in sources)}", file=sys.stderr)
+            sys.exit(2)
+        sources = tuple((n, f) for n, f in sources if n in want)
+        print(f"[--only] {', '.join(n for n, _ in sources)}만 실행")
+
     for name, fn in sources:
         try:
             got = fn(today)

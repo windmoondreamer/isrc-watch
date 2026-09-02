@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  깃허브 러너에서 IP로 막히는 소스를 이 맥에서 보충 실행한다.
+  월·목 08:00 KST — Actions 정규 실행(07:20)보다 뒤라 중복 등록이 생기지 않는다
+  (중복은 어차피 [SRC:마커]로 걸러지지만, 순서를 지켜야 로그가 읽기 쉽다).
+
+  설치:
+    cp scripts/com.jangjaewon.isrc-watch-local.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.jangjaewon.isrc-watch-local.plist
+  즉시 한 번 돌려보기:
+    launchctl start com.jangjaewon.isrc-watch-local
+  해제:
+    launchctl unload ~/Library/LaunchAgents/com.jangjaewon.isrc-watch-local.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jangjaewon.isrc-watch-local</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/jangjaewon/isrc-watch/scripts/run_local_sources.sh</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jangjaewon/isrc-watch/local-run.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jangjaewon/isrc-watch/local-run.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
