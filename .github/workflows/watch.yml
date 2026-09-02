@@ -22,6 +22,25 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: (임시) 러너에서 소스 접근성 진단
+        run: |
+          UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+          echo "## 러너 위치"; curl -s -m 10 https://ipinfo.io/json | tr -d '\n' | head -c 200; echo
+          echo "## SKHY wp-json (UA만)"
+          curl -s -o /dev/null -w "  %{http_code}\n" -m 20 -A "$UA" "https://news.skhynix.co.kr/wp-json/wp/v2/posts?per_page=1&_fields=id"
+          echo "## SKHY wp-json (브라우저 헤더 풀세트)"
+          curl -s -o /dev/null -w "  %{http_code}\n" -m 20 -A "$UA" -H "Accept: application/json, text/plain, */*" -H "Accept-Language: ko-KR,ko;q=0.9,en;q=0.8" -H "Referer: https://news.skhynix.co.kr/" "https://news.skhynix.co.kr/wp-json/wp/v2/posts?per_page=1&_fields=id"
+          echo "## SKHY 메인 HTML"
+          curl -s -o /dev/null -w "  %{http_code}\n" -m 20 -A "$UA" "https://news.skhynix.co.kr/"
+          echo "## SKHY 검색 HTML"
+          curl -s -o /dev/null -w "  %{http_code}\n" -m 20 -A "$UA" "https://news.skhynix.co.kr/?s=%EA%B3%84%EC%95%BD%ED%95%99%EA%B3%BC"
+          echo "## MOTIE 목록"
+          curl -s -o /dev/null -w "  %{http_code} (%{time_total}s)\n" -m 30 -A "$UA" "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c"
+          echo "## 대조군"
+          for u in "https://www.idec.or.kr/edu/apply/list/" "https://ice.skku.edu/ice/notice_job.do" "https://www.skcurriculum.com/" "https://semicon.skku.edu/"; do
+            echo -n "  $u -> "; curl -sk -o /dev/null -w "%{http_code}\n" -m 25 -A "$UA" "$u"
+          done
+
       - name: 교육·공모전 소스 조회 → 노션 등록
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
