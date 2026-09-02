@@ -691,9 +691,11 @@ def from_skcurriculum(today):
 # 계약학과 신설·특성화대학 선정·인력양성 사업은 기관 공고보다 부처 보도자료가 먼저다.
 # 목록은 상세 링크가 javascript:article.view('seq')라 seq만 뽑아 view URL을 조립한다.
 # ※ 과기정통부(msit.go.kr)는 2026-09-02 확인 시점에 시스템 점검 중이라 미추가.
-MOTIE_LIST = "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c?pageIndex={}"
+# motie.go.kr은 motir.go.kr로 301 리다이렉트된다. 옛 도메인을 쓰면 러너에서
+# 리다이렉트 구간이 타임아웃으로 죽어 소스가 통째로 날아간다(2026-09-02 실측). 정본을 직접 쓴다.
+MOTIE_LIST = "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?pageIndex={}"
 MOTIE_PAGES = 2  # 1페이지 10건. 보도자료는 하루 5~10건이라 2페이지면 연휴 뒤에도 덮인다
-MOTIE_VIEW = "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c/{}/view"
+MOTIE_VIEW = "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/{}/view"
 MOTIE_NAME = "산업통상부 보도자료"
 # 보도자료 전체를 담으면 노션이 산업 뉴스로 덮인다. 주제와 교육 키워드가 '둘 다' 있어야 한다.
 MOTIE_TOPIC = ("반도체", "소부장", "시스템반도체")

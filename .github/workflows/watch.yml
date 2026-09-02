@@ -22,29 +22,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: (임시) 러너에서 소스 접근성 진단
-        run: |
-          set +e
-          UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-          probe() { printf '  %-58s ' "$2"; curl -skL -o /dev/null -w "%{http_code} (%{time_total}s)\n" -m 25 -A "$UA" "$1"; }
-          echo "## 러너 위치"; curl -s -m 10 https://ipinfo.io/json | tr -d '\n' | head -c 160; echo
-          echo "## 새로 추가한 소스"
-          probe "https://news.skhynix.co.kr/wp-json/wp/v2/posts?per_page=1&_fields=id" "SKHY wp-json"
-          probe "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c" "MOTIE 목록(리다이렉트 추적)"
-          probe "https://www.skcurriculum.com/" "skcurriculum"
-          probe "https://ice.skku.edu/ice/notice_job.do" "성균관대 ice"
-          probe "https://semicon.skku.edu/index.php?mt=page&mp=4_1&mm=oxbbs&oxid=1" "성균관대 semicon"
-          echo "## MOTIE 301 목적지"
-          curl -s -o /dev/null -w "  %{redirect_url}\n" -m 20 -A "$UA" "https://www.motie.go.kr/kor/article/ATCL3f49a5a8c"
-          echo "## 기존 소스 (대조군)"
-          probe "https://www.idec.or.kr/edu/apply/list/" "IDEC"
-          probe "https://infra.ksia.or.kr/user/Wo/WoUser0101L.do" "KSIA"
-          probe "https://www.wevity.com/?c=find&s=1&gub=1&cidx=22" "wevity"
-          probe "https://css.kanc.re.kr/cgnb02/snb05.do" "KANC"
-          probe "https://www.nnfc.re.kr/prog/edu/kor/sub01_03_04/list_json.do" "NNFC"
-          probe "https://www.konkuk.ac.kr/bbs/job/4083/artclList.do" "건국대"
-          exit 0
-
       - name: 교육·공모전 소스 조회 → 노션 등록
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
