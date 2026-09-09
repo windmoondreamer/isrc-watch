@@ -561,11 +561,13 @@ def from_nnfc(today):
 #   단대·학과   table > tr          + td.td_tit
 # 링크도 두 형식(goDetail(seq) / href=".../detail/seq")이라 둘 다 읽는다.
 DGU_BOARDS = (
-    # (표시명, 베이스, 게시판코드, 목적지)
-    ("첨단융합대", "https://ai.dongguk.edu", "notice", "edu"),        # 시스템반도체학부 소속 단대
-    ("첨단융합대 대외활동", "https://ai.dongguk.edu", "notice2", "edu"),
-    ("전자전기공학부", "https://dee.dongguk.edu", "notice1", "edu"),
-    ("장학공지", "https://www.dongguk.edu", "JANGHAKNOTICE", "scholar"),
+    # (표시명, 베이스, 게시판코드, 목적지, 볼 페이지 수)
+    ("첨단융합대", "https://ai.dongguk.edu", "notice", "edu", 1),      # 시스템반도체학부 소속 단대
+    ("첨단융합대 대외활동", "https://ai.dongguk.edu", "notice2", "edu", 1),
+    ("전자전기공학부", "https://dee.dongguk.edu", "notice1", "edu", 1),
+    # 장학공지는 하루 1~3건씩 올라와 1페이지(20건)면 며칠치밖에 안 보인다.
+    # 실제로 첫 수집에서 안당학술장학(마감 9/11)이 2페이지로 밀려 통째로 빠졌다.
+    ("장학공지", "https://www.dongguk.edu", "JANGHAKNOTICE", "scholar", 3),
 )
 
 # 반도체 게시판이 아닌 곳(단대 공지·장학공지)에서 건질 글을 고르는 키워드.
@@ -711,13 +713,20 @@ def from_dgu(today):
     반도체 쪽은 목록만 읽고 상세는 사람에게 넘긴다 — 게시판 글 형식이 제각각이라
     본문 파싱이 오히려 틀린 정보를 만든다."""
     out = []
-    for name, base, board, target in DGU_BOARDS:
-        try:
-            raw = http(f"{base}/article/{board}/list", raw=True)
-        except Exception as e:
-            print(f"[교내게시판] {name} 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
-            continue
-        for row in dgu_parse(raw, base, board):
+    for name, base, board, target, pages in DGU_BOARDS:
+        rows, seen = [], set()
+        for page in range(1, pages + 1):
+            try:
+                raw = http(f"{base}/article/{board}/list?pageIndex={page}", raw=True)
+            except Exception as e:
+                print(f"[교내게시판] {name} {page}페이지 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
+                continue
+            for row in dgu_parse(raw, base, board):
+                if row["seq"] in seen:  # 상단 고정 공지는 모든 페이지에 반복된다
+                    continue
+                seen.add(row["seq"])
+                rows.append(row)
+        for row in rows:
             title, posted = row["title"], row["date"]
             low = title.lower()
             if target == "edu":
