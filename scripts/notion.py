@@ -29,6 +29,7 @@ CALENDAR_DB = "cbf3ebf0330d44dd938e6186cb2bf896"   # 2026 여름 실행 캘린�
 RETRO_DB = "dea6c521912844b49d5458bb557ef938"      # 주간 회고
 BODY_DB = "bce0e8b176c249f5989e412660cf7ba6"       # 신체 측정
 TRADING_DB = "38fd85ed153f48e3bfe2453e3a423b69"    # 💸 트레이딩 로그 (재미예산)
+SCHOLAR_DB = "7cc4b21053f84ef794ace2d717146e50"  # 🎓 장학·지원금 (교내 장학공지 자동 수집)
 
 # --- 메인 페이지의 고정 블록 ID ---
 # 노션 블록 ID는 블록을 지우고 새로 만들지 않는 한 바뀌지 않는다.

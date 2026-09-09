@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 
 from notion import (
     CALENDAR_DB,
+    SCHOLAR_DB,
     INSECURE_HOSTS,
     UA,
     CONTEST_DB,
@@ -549,6 +550,276 @@ def from_nnfc(today):
     return out
 
 
+
+# ---------- 교내 게시판 (동국대) ----------
+# ISRC·IDEC 같은 외부 기관은 '반도체 교육'만 다루지만, 본인이 실제로 신청할 수 있는
+# 교내 프로그램·장학은 학교 게시판에만 뜬다. 2026-09-09 실측으로 살아 있는 게시판만 넣었다.
+# (전자전기 job·JnP 게시판은 각각 2023-09, 2024-12에서 멈춰 있어 감시 가치가 없다.)
+#
+# 동국대 CMS는 레이아웃이 둘이다:
+#   본부(www)  ul.board_list > li  + <p class="tit">
+#   단대·학과   table > tr          + td.td_tit
+# 링크도 두 형식(goDetail(seq) / href=".../detail/seq")이라 둘 다 읽는다.
+DGU_BOARDS = (
+    # (표시명, 베이스, 게시판코드, 목적지)
+    ("첨단융합대", "https://ai.dongguk.edu", "notice", "edu"),        # 시스템반도체학부 소속 단대
+    ("첨단융합대 대외활동", "https://ai.dongguk.edu", "notice2", "edu"),
+    ("전자전기공학부", "https://dee.dongguk.edu", "notice1", "edu"),
+    ("장학공지", "https://www.dongguk.edu", "JANGHAKNOTICE", "scholar"),
+)
+
+# 반도체 게시판이 아닌 곳(단대 공지·장학공지)에서 건질 글을 고르는 키워드.
+# '실습'·'특강'만으론 교양 특강까지 걸려 오탐이 난다.
+DGU_SEMI_KW = (
+    "반도체", "소자", "공정", "웨이퍼", "패키징", "soc", "회로", "칩", "팹", "나노",
+    "semiconductor", "mems", "센서", "임베디드", "fpga", "verilog", "양자",
+)
+DGU_MONEY_KW = ("장학", "학자금", "등록금", "지원금", "생활비")
+
+# 지역 연고가 있어야 신청할 수 있는 장학. 이런 글은 버리지 않고 '연고필요'로 표시만 한다
+# (사용자가 해당 지역 연고일 수 있으므로 판단을 사람에게 넘긴다).
+DGU_REGION_KW = (
+    "통영", "익산", "포항", "성남", "인천", "대전", "울산", "달서", "광산", "은평",
+    "지역인재", "출신", "거주", "주민등록", "시장학", "군장학", "구장학",
+)
+# 학부생이 아예 지원할 수 없는 것들 — 제목·본문에 이게 있으면 '대상아님'.
+DGU_EXCLUDE_KW = ("대학원생 대상", "석·박사", "석박사과정", "박사과정", "고졸 후학습자", "재직자")
+
+# 본인 학자금 지원구간. 공고가 'N구간(분위) 이하'를 요구하면 이 값과 비교해 대상 여부를 가른다.
+MY_INCOME_TIER = 7
+
+
+def dgu_parse(raw, base, board):
+    """동국대 CMS 목록 파싱 — 두 레이아웃을 모두 읽는다."""
+    out = []
+    if "td_tit" in raw:  # 단대·학과 레이아웃
+        for tr in re.findall(r"<tr>(.*?)</tr>", raw, re.S):
+            tit = re.search(r'<td class="td_tit">(.*?)</td>', tr, re.S)
+            seq = re.search(r"goDetail\((\d+)\)", tr) or re.search(r"/detail/(\d+)", tr)
+            if not (tit and seq):
+                continue
+            title = strip_tags(re.sub(r"<img[^>]*>", "", tit.group(1)))
+            date = re.search(r"(20\d\d-\d\d-\d\d)", tr)
+            out.append((seq.group(1), title, date.group(1) if date else ""))
+    else:  # 본부 레이아웃 — li가 중첩돼 있어 goDetail 위치로 항목을 나눈다
+        hits = list(re.finditer(r"goDetail\((\d+)\)", raw))
+        for i, m in enumerate(hits):
+            end = hits[i + 1].start() if i + 1 < len(hits) else min(len(raw), m.end() + 2000)
+            blk = raw[m.end():end]
+            tit = re.search(r'<p class="tit">(.*?)</p>', blk, re.S)
+            if not tit:
+                continue
+            title = re.sub(r"^(공지|NEW|새글)\s*", "", strip_tags(tit.group(1)))
+            date = re.search(r"(20\d\d[.-]\d\d[.-]\d\d)", blk)
+            out.append((m.group(1), title, re.sub(r"[.]", "-", date.group(1)).rstrip("-") if date else ""))
+    seen, res = set(), []
+    for seq, title, date in out:
+        if seq in seen or not title:
+            continue
+        seen.add(seq)
+        res.append({"seq": seq, "title": title, "date": date,
+                    "url": f"{base}/article/{board}/detail/{seq}"})
+    return res
+
+
+# 제목에 박힌 마감 표기: '(~9/18)', '(9/1(화)~9/18(금))', '~ 2026.9.11.', '(~09/30)'
+DEADLINE_PATS = (
+    re.compile(r"~\s*(20\d\d)[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})"),
+    re.compile(r"~\s*(\d{1,2})\s*[./]\s*(\d{1,2})"),
+)
+
+
+def dgu_deadline(title, posted):
+    """제목에서 신청마감을 뽑는다. 연도가 없으면 게시일 기준으로 채운다.
+
+    게시일이 12월인데 마감이 1월이면 다음 해다 — 연말 공고에서 실제로 나오는 경우라
+    월 역전이면 +1년 한다. 못 뽑으면 빈 문자열(= 게시글 직접 확인)."""
+    m = DEADLINE_PATS[0].search(title)
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        try:
+            return f"{y:04d}-{mo:02d}-{d:02d}" if datetime(y, mo, d) else ""
+        except ValueError:
+            return ""
+    m = DEADLINE_PATS[1].search(title)
+    if not m or not posted:
+        return ""
+    mo, d = int(m.group(1)), int(m.group(2))
+    try:
+        py, pm = int(posted[:4]), int(posted[5:7])
+        year = py + 1 if mo < pm - 6 else py
+        datetime(year, mo, d)  # 2/31 같은 값 방어
+        return f"{year:04d}-{mo:02d}-{d:02d}"
+    except ValueError:
+        return ""
+
+
+# '3구간 이하'가 자격 요건인지 우선선발 기준인지가 갈린다. 고양이엄마(송수경)장학은
+# 자격이 '재학생 + 평점 3.5'이고 3구간은 우선선발일 뿐이라, 구간만 보고 잘라내면
+# 400만원짜리를 놓친다. 뒤에 우선/우대 문구가 붙으면 자격 조건으로 읽지 않는다.
+TIER_RE = re.compile(r"(\d)\s*(?:구간|분위)\s*이하")
+TIER_PRIORITY_RE = re.compile(r"(\d)\s*(?:구간|분위)\s*이하[^.]{0,20}(우선|우대)")
+
+
+def scholar_eligibility(title, body):
+    """소득 7구간 기준으로 지원 가능 여부를 가른다.
+
+    공고가 요구하는 구간이 본인 구간보다 낮으면 '대상아님'. 지역 연고를 요구하면
+    '연고필요'(본인이 그 지역 연고일 수 있으니 버리지 않는다). 판단 근거가 없으면
+    '조건확인' — 추측으로 '지원가능'을 붙이지 않는다."""
+    t = f"{title} {body}"
+    if any(k in t for k in DGU_EXCLUDE_KW):
+        return "대상아님", "학부생 대상 아님"
+    pri = TIER_PRIORITY_RE.search(t)
+    if pri:
+        return "조건확인", f"{pri.group(1)}구간 이하 우선선발 — 본인 {MY_INCOME_TIER}구간이라 후순위지만 지원 가능"
+    m = TIER_RE.search(t)
+    if m:
+        need = int(m.group(1))
+        if need < MY_INCOME_TIER:
+            return "대상아님", f"{need}구간 이하 요구 (본인 {MY_INCOME_TIER}구간)"
+        return "지원가능", f"{need}구간 이하 — 본인 {MY_INCOME_TIER}구간 해당"
+    if any(k in t for k in DGU_REGION_KW):
+        return "연고필요", "지역 연고·출신 요건 있음"
+    return "조건확인", ""
+
+
+def scholar_kind(title, body):
+    """앞 규칙이 이긴다. nDRIMS 신청은 학교가 굴리는 장학이라, 본문에 '한국장학재단'이
+    스쳐 지나가도(이중수혜 안내 등) 국가장학으로 분류하지 않는다."""
+    t = f"{title} {body}"
+    if "학자금대출" in t or "대출이자" in t:
+        return "대출"
+    if any(k in t for k in DGU_REGION_KW):
+        return "지역연고"
+    if "ndrims" in t.lower() or "엔드림스" in t:
+        return "교내"
+    if "국가장학금" in title or "주거안정장학" in title:
+        return "국가"
+    if "재단" in title or "[홍보]" in title:
+        return "교외재단"
+    return "교내"
+
+
+AMOUNT_RE = re.compile(r"(\d[\d,]*\s*만\s*원|\d[\d,]{5,}\s*원|전액)")
+
+
+def from_dgu(today):
+    """교내 게시판에서 반도체 프로그램과 장학 공고를 긁는다.
+
+    장학은 상세 본문까지 읽어 자격·금액을 뽑는다(목록 제목만으론 구간 조건을 알 수 없다).
+    반도체 쪽은 목록만 읽고 상세는 사람에게 넘긴다 — 게시판 글 형식이 제각각이라
+    본문 파싱이 오히려 틀린 정보를 만든다."""
+    out = []
+    for name, base, board, target in DGU_BOARDS:
+        try:
+            raw = http(f"{base}/article/{board}/list", raw=True)
+        except Exception as e:
+            print(f"[교내게시판] {name} 접속 실패: {type(e).__name__} {e}", file=sys.stderr)
+            continue
+        for row in dgu_parse(raw, base, board):
+            title, posted = row["title"], row["date"]
+            low = title.lower()
+            if target == "edu":
+                if not (any(k in low for k in DGU_SEMI_KW) or any(k in title for k in DGU_MONEY_KW)):
+                    continue
+            # 게시일이 오래된 글은 지난 회차다
+            if posted:
+                try:
+                    if (datetime.now(KST).date() - datetime.strptime(posted, "%Y-%m-%d").date()).days > 90:
+                        continue
+                except ValueError:
+                    pass
+            deadline = dgu_deadline(title, posted)
+            item = {
+                "target": target,
+                "marker": f"DGU:{board}:{row['seq']}",
+                "title": f"{title[:70]} ({name})" if target == "edu" else title[:90],
+                "core_title": title,
+                "deadline": deadline,
+                "status": "신청중",
+                "link": row["url"],
+                "note": f"{name} · 게시 {posted or '?'}",
+            }
+            if target == "scholar":
+                body = ""
+                try:
+                    d = http(row["url"], raw=True)
+                    m = re.search(r'<div class="view_cont">(.*?)<div class="view_more">', d, re.S)
+                    body = strip_tags(m.group(1))[:1500] if m else ""
+                except Exception:
+                    pass  # 본문을 못 읽어도 목록 정보만으로 등록한다
+                verdict, why = scholar_eligibility(title, body)
+                amount = AMOUNT_RE.search(f"{title} {body}")
+                item["eligibility"] = verdict
+                item["kind"] = scholar_kind(title, body)
+                item["amount"] = amount.group(1).replace(" ", "") if amount else ""
+                item["qualify"] = why or (body[:180] if body else "게시글 직접 확인")
+                if not deadline:
+                    item["note"] += " · ⚠️마감일은 게시글 확인 필요"
+            out.append(item)
+
+    # 반도체 부트캠프 사업단은 별도 PHP 사이트라 위 CMS 파서가 안 통한다.
+    out.extend(from_semibootcamp(today))
+    return out
+
+
+# 반도체 인재양성 부트캠프 사업단 — SK하이닉스 커리큘럼·산학강좌·개별연구가 여기 뜬다.
+# 학교 CMS가 아니라 자체 PHP 게시판(테이블형 + 갤러리형)이라 파서를 따로 둔다.
+SEMIBOOT = "https://semibootcamp.dongguk.edu"
+
+
+def from_semibootcamp(today):
+    out = []
+    # 공지사항 — 테이블형
+    try:
+        raw = http(f"{SEMIBOOT}/community/notice.php", raw=True)
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", raw, re.S):
+            a = re.search(r'href="([^"]*idx=(\d+)[^"]*)"', tr)
+            if not a:
+                continue
+            title = strip_tags(re.sub(r'<td class="[^"]*">\s*(공지|\d+)\s*</td>', "", tr, count=1))
+            title = re.sub(r"^(공지|\d+)\s*", "", title)
+            title = re.sub(r"\s*관리자\s*20\d\d-\d\d-\d\d\s*\d*\s*$", "", title).strip()
+            date = re.search(r"(20\d\d-\d\d-\d\d)", tr)
+            if not title:
+                continue
+            out.append({
+                "target": "edu",
+                "marker": f"SEMIBOOT:notice:{a.group(2)}",
+                "title": f"{title[:70]} (반도체 부트캠프)",
+                "core_title": title,
+                "deadline": dgu_deadline(title, date.group(1) if date else ""),
+                "status": "신청중",
+                "link": SEMIBOOT + "/community/notice.php" + a.group(1).split("notice.php")[-1],
+                "note": f"반도체 부트캠프 공지 · 게시 {date.group(1) if date else '?'}",
+            })
+    except Exception as e:
+        print(f"[부트캠프] 공지 실패: {type(e).__name__} {e}", file=sys.stderr)
+
+    # 모집프로그램 — 갤러리형(썸네일 + title 속성)
+    try:
+        raw = http(f"{SEMIBOOT}/program/list.php", raw=True)
+        for m in re.finditer(r'<a href="([^"]*idx=(\d+)[^"]*)" title="([^"]*)"', raw):
+            # 사이트가 'embed' 같은 문자열을 'em<x>bedded'로 필터링해 내보낸다
+            title = re.sub(r"<[a-z]>", "", html.unescape(m.group(3))).strip()
+            if not title:
+                continue
+            out.append({
+                "target": "edu",
+                "marker": f"SEMIBOOT:program:{m.group(2)}",
+                "title": f"{title[:70]} (반도체 부트캠프 모집)",
+                "core_title": title,
+                "deadline": "",
+                "status": "신청중",
+                "link": SEMIBOOT + "/program/list.php" + m.group(1).split("list.php")[-1],
+                "note": _expire("반도체 부트캠프 모집프로그램 · ⚠️신청기간은 상세 확인", 60),
+            })
+    except Exception as e:
+        print(f"[부트캠프] 모집프로그램 실패: {type(e).__name__} {e}", file=sys.stderr)
+    return out
+
+
 # ---------- 마감일 없는 '발견' 항목의 자동 만료 ----------
 # 뉴스 기사·게시판 글은 신청마감이 없다. 그대로 두면 노션에 영구히 쌓여
 # cleanup_expired가 손대지 못한다(날짜를 모르면 보존이 원칙이라서).
@@ -998,6 +1269,25 @@ def add_row(item):
     # select를 새로 만들지 않고 메모 앞머리에 붙인다 — DB 스키마를 건드리지 않는다.
     tag = f"[{program_type(item['title'], item['note'])}] " if item["target"] == "edu" else ""
     note = f"{tag}{item['note']} · [SRC:{item['marker']}]"
+    if item["target"] == "scholar":
+        # 장학은 축이 다르다 — '분야'(공정/설계) 대신 구분·해당여부·금액을 쓴다.
+        props = {
+            "장학명": {"title": [{"text": {"content": item["title"][:200]}}]},
+            "상태": {"select": {"name": item["status"]}},
+            "구분": {"select": {"name": item["kind"]}},
+            "해당여부": {"select": {"name": item["eligibility"]}},
+            "링크": {"url": item["link"]},
+            "자격조건": {"rich_text": [{"text": {"content": item["qualify"][:2000]}}]},
+            "주요 일정": {"rich_text": [{"text": {"content": note[:2000]}}]},
+        }
+        if item["amount"]:
+            props["금액"] = {"rich_text": [{"text": {"content": item["amount"]}}]}
+        iso = to_iso(item["deadline"]) if item["deadline"] else None
+        if iso:
+            props["신청마감"] = {"date": {"start": iso}}
+        notion("/pages", method="POST",
+               data={"parent": {"database_id": SCHOLAR_DB}, "properties": props})
+        return
     if item["target"] == "edu":
         db_id = EDU_DB
         props = {
@@ -1226,6 +1516,7 @@ def main():
         ("대학게시판", from_univ), ("성균관대", from_skku),
         ("기업뉴스룸", from_newsrooms), ("SK커리큘럼", from_skcurriculum),
         ("산업통상부", from_motie),
+        ("교내게시판", from_dgu),
     )
     if ONLY:
         want = {n.strip() for n in ONLY.split(",") if n.strip()}
@@ -1251,13 +1542,22 @@ def main():
     if COLLECT_ONLY:
         print(f"\n[collect-only] 총 {len(items)}건 — 노션 조회·쓰기 없음")
         for i in items:
-            kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
+            if i["target"] == "scholar":
+                kind = f"장학/{i['kind']}/{i['eligibility']}"
+            else:
+                kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
             print(f"  [{kind}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
         for e in errors:
             print(f"  ⚠️ {e}")
         return
 
     edu_markers, edu_titles = existing_rows(EDU_DB, "교육명")
+    try:
+        sch_markers, sch_titles = existing_rows(SCHOLAR_DB, "장학명")
+    except urllib.error.HTTPError as e:
+        # 장학 DB에 통합이 연결 안 됐어도 교육·공모전은 계속 처리한다.
+        errors.append(f"장학 DB 접근 실패(통합 연결 확인): HTTP {e.code}")
+        sch_markers, sch_titles = set(), None
     try:
         contest_markers, contest_titles = existing_rows(CONTEST_DB, "대회명")
     except urllib.error.HTTPError as e:
@@ -1271,12 +1571,16 @@ def main():
         errors.append(f"신청완료 일정 조회 실패: {type(e).__name__} {e}")
         booked = []
 
+    known = {
+        "edu": (edu_markers, edu_titles),
+        "contest": (contest_markers, contest_titles),
+        "scholar": (sch_markers, sch_titles),
+    }
     new = []
     for i in items:
-        if i["target"] == "contest" and contest_titles is None:
+        markers, titles = known[i["target"]]
+        if titles is None:  # 해당 DB에 통합이 연결 안 됨 — 그 종류만 건너뛴다
             continue
-        titles = edu_titles if i["target"] == "edu" else contest_titles
-        markers = edu_markers if i["target"] == "edu" else contest_markers
         if not is_known(i, markers, titles):
             if i["target"] == "edu" and (c := conflicts(i, booked)):
                 i["note"] = f"{c} · {i['note']}"
@@ -1286,7 +1590,10 @@ def main():
     for i in new:
         if not DRY:
             add_row(i)
-        kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
+        if i["target"] == "scholar":
+            kind = f"장학/{i['kind']}/{i['eligibility']}"
+        else:
+            kind = program_type(i["title"], i["note"]) if i["target"] == "edu" else "공모전"
         print(f"  {'· 미리보기' if DRY else '→ 등록'}: [{kind}] {i['title']} (마감 {i['deadline'] or '확인필요'})")
 
     # 공유용 DB 미러링 — 교육 항목만, 개인 정보 없이. 통합 연결 안 됐으면 조용히 건너뛴다.
