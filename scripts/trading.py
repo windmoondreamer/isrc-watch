@@ -106,17 +106,10 @@ def fetch_log():
     for r in rows:
         p = r["properties"]
         d = p["거래일"].get("date")
-        sel = p.get("결과", {}).get("select")
         out.append({
             "d": date.fromisoformat(d["start"]) if d else None,
             "ret": p["손익률"].get("number"),
             "equity": p["누적자산"].get("number"),
-            # 아래 셋은 live_trading.py가 장중 포지션을 복구할 때만 쓴다.
-            "id": r["id"],
-            "result": sel["name"] if sel else None,
-            "entry": p.get("진입가", {}).get("number"),
-            "checklist": "".join(t["plain_text"]
-                                 for t in p.get("체크리스트", {}).get("rich_text", [])),
         })
     return [r for r in out if r["d"]]
 
@@ -140,14 +133,12 @@ def breaker(log, session_day):
     return None
 
 
-def write_row(session_day, rec, result, entry, ret, equity, checklist, dry,
-              page_id=None):
-    """행을 만들거나(page_id 없음) 갱신한다(page_id 있음). 페이지 id를 돌려준다."""
+def write_row(session_day, rec, result, entry, ret, equity, checklist, dry):
     title = f"{session_day.isoformat()} ({WEEKDAY_KR[session_day.weekday()]})"
     if dry:
         print(f"[dry-run] {title} | {rec} | {result} | ret={ret} | eq={equity:.2f}")
         print(f"[dry-run] {checklist}")
-        return None
+        return
     props = {
         "날짜": {"title": [{"text": {"content": title}}]},
         "거래일": {"date": {"start": session_day.isoformat()}},
@@ -163,15 +154,9 @@ def write_row(session_day, rec, result, entry, ret, equity, checklist, dry,
         props["익절가"] = {"number": round(entry * (1 + TP), 2)}
     if ret is not None:
         props["손익률"] = {"number": round(ret, 4)}
-    if page_id:
-        page = api(f"/pages/{page_id}", "PATCH", {"properties": props})
-        verb = "갱신됨"
-    else:
-        page = api("/pages", "POST", {"parent": {"database_id": TRADING_DB},
-                                      "properties": props})
-        verb = "기록됨"
-    print(f"{verb}: {title} | {rec} | {result} | eq=${equity:.2f}")
-    return page["id"]
+    api("/pages", "POST", {"parent": {"database_id": TRADING_DB},
+                           "properties": props})
+    print(f"기록됨: {title} | {rec} | {result} | eq=${equity:.2f}")
 
 
 BACKFILL_LIMIT = 5  # 미기록 세션 소급 처리 상한 (Actions 장애 대비)
@@ -186,9 +171,7 @@ def main():
     log = [] if dry else fetch_log()
     equity = next((r["equity"] for r in reversed(log)
                    if r["equity"] is not None), START_EQUITY)
-    # '보유중'은 장중 엔진이 청산을 못 하고 죽은 흔적이므로 미기록으로 취급해 이어받는다.
-    logged = {r["d"] for r in log if r.get("result") != "보유중"}
-    open_rows = {r["d"]: r["id"] for r in log if r.get("result") == "보유중"}
+    logged = {r["d"] for r in log}
 
     # 완료됐는데 미기록인 세션들 (최근 BACKFILL_LIMIT개, 오래된 것부터).
     # 오늘 세션은 마감 이후(21:00 UTC~)에만 완료로 간주.
@@ -200,8 +183,7 @@ def main():
         if (now.hour >= 21 and today_utc.weekday() < 5
                 and soxl[-1]["d"] != today_utc and today_utc not in logged):
             write_row(today_utc, "휴장", "휴장", None, None, equity,
-                      f"미국 휴장 (마지막 거래일 {soxl[-1]['d']})", dry,
-                      open_rows.get(today_utc))
+                      f"미국 휴장 (마지막 거래일 {soxl[-1]['d']})", dry)
         else:
             print(f"기록할 세션 없음 (마지막 완료 세션 {soxl[-1]['d']})")
         return
@@ -237,7 +219,7 @@ def main():
                               f"누적 {(equity / START_EQUITY - 1) * 100:+.1f}%")
 
         write_row(bar["d"], rec, result, entry if rec == "SOXL" else None,
-                  ret, equity, checklist, dry, open_rows.get(bar["d"]))
+                  ret, equity, checklist, dry)
         log.append({"d": bar["d"], "ret": ret, "equity": equity})
 
 
