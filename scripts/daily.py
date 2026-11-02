@@ -9,7 +9,7 @@ LLM이 필요한 두 브리핑(반도체 소식·세계 경제)만 클로드 루
   3. D-Day 갱신 — 자격증 표 + ⚡ 지금 당장 TOP 3
   4. 마감 임박 / 접수 시작 예정 콜아웃 재작성 (교육·강의 + 공모전 DB)
   5. 마감 지난 항목 상태를 '마감'으로, 접수 시작된 '예정'을 '신청중'으로
-  6. 월요일 → 주간 회고 행 생성 / 토요일 → 신체 측정 행 생성
+  6. 월요일 → 주간 회고 행 + 신체 측정 행 생성
 
 순서 주의: 1번(🛏️ 읽기)이 2번(체크박스 해제)보다 반드시 먼저다.
 """
@@ -295,7 +295,7 @@ def weekly_retro(today):
 
 
 def body_measure(today):
-    title = f"{today.isoformat()} (토)"
+    title = f"{today.isoformat()} ({WEEKDAY_KR[today.weekday()]})"
     if any(prop_title(p, "기록") == title for p in query_all(BODY_DB)):
         note(f"신체 측정 '{title}' 이미 있음")
         return
@@ -327,7 +327,6 @@ def main():
 
     if weekday == 0:
         weekly_retro(today)
-    if weekday == 5:
         body_measure(today)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
